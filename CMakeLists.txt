@@ -2,19 +2,13 @@ cmake_minimum_required(VERSION 3.20)
 
 project(workshop_server LANGUAGES C CXX)
 
+find_package(Drogon REQUIRED)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# Qt6: автогенерация MOC (только для Q_OBJECT, без UI)
-set(CMAKE_AUTOMOC ON)
-
-# Пусть CMake сможет найти Qt, если путь не передан извне
-if(WIN32 AND NOT DEFINED CMAKE_PREFIX_PATH)
-  set(CMAKE_PREFIX_PATH "C:/Qt/6.9.2/mingw_64")
-endif()
 
 ## Явная линковка вместо слепого GLOB по всем .a/.dll.a
 
@@ -29,7 +23,6 @@ file(GLOB_RECURSE PROJECT_SOURCES CONFIGURE_DEPENDS
   "${CMAKE_SOURCE_DIR}/src/workers/*.cpp"
 )
 
-# Добавляем заголовочные файлы для правильной работы MOC с Q_OBJECT
 file(GLOB_RECURSE PROJECT_HEADERS CONFIGURE_DEPENDS
   "${CMAKE_SOURCE_DIR}/include/*.h"
   "${CMAKE_SOURCE_DIR}/include/TreeWidgets/*.h"
@@ -46,18 +39,12 @@ target_include_directories(app PRIVATE
     "${CMAKE_SOURCE_DIR}/include/TreeWidgets"
     "${CMAKE_SOURCE_DIR}/include/DB"
     "${CMAKE_SOURCE_DIR}/include/Table"
-    ${THIRD_PARTY_INCLUDE_DIR}
-
+    ${THIRD_PARTY_INCLUDE_DIR} # сторонние библиотеки, которые ты кладёшь вручную
 )
-
-# Qt6 модули (только Core и Network для сервера)
-set(QT_REQUIRED_COMPONENTS Core Network)
-find_package(Qt6 REQUIRED COMPONENTS ${QT_REQUIRED_COMPONENTS})
 
 # Линкуем библиотеки
 target_link_libraries(app PRIVATE
-  Qt6::Core
-  Qt6::Network
+    Drogon::Drogon
 )
 
 if(WIN32)
