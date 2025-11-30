@@ -23,6 +23,7 @@ file(GLOB_RECURSE PROJECT_SOURCES CONFIGURE_DEPENDS
   "${CMAKE_SOURCE_DIR}/src/workers/*.cpp"
 )
 
+# Добавляем заголовочные файлы для правильной работы MOC с Q_OBJECT
 file(GLOB_RECURSE PROJECT_HEADERS CONFIGURE_DEPENDS
   "${CMAKE_SOURCE_DIR}/include/*.h"
   "${CMAKE_SOURCE_DIR}/include/TreeWidgets/*.h"
@@ -39,12 +40,15 @@ target_include_directories(app PRIVATE
     "${CMAKE_SOURCE_DIR}/include/TreeWidgets"
     "${CMAKE_SOURCE_DIR}/include/DB"
     "${CMAKE_SOURCE_DIR}/include/Table"
-    ${THIRD_PARTY_INCLUDE_DIR} # сторонние библиотеки, которые ты кладёшь вручную
+    ${THIRD_PARTY_INCLUDE_DIR}
 )
+
+# Drogon (HTTP-фреймворк)
+find_package(Drogon REQUIRED)
 
 # Линкуем библиотеки
 target_link_libraries(app PRIVATE
-    Drogon::Drogon
+  Drogon::Drogon
 )
 
 if(WIN32)
