@@ -61,3 +61,8 @@ if(MSVC)
 else()
   target_compile_options(app PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+# Устанавливаем путь вывода исполняемого файла в build/bin
+set_target_properties(app PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
