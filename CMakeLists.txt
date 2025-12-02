@@ -21,6 +21,7 @@ file(GLOB_RECURSE PROJECT_SOURCES CONFIGURE_DEPENDS
   "${CMAKE_SOURCE_DIR}/src/DB/*.cpp"
   "${CMAKE_SOURCE_DIR}/src/Table/*.cpp"
   "${CMAKE_SOURCE_DIR}/src/workers/*.cpp"
+  "${CMAKE_SOURCE_DIR}/src/ConectionToClient/*.cpp"
 )
 
 # Добавляем заголовочные файлы для правильной работы MOC с Q_OBJECT
@@ -30,6 +31,7 @@ file(GLOB_RECURSE PROJECT_HEADERS CONFIGURE_DEPENDS
   "${CMAKE_SOURCE_DIR}/include/DB/*.h"
   "${CMAKE_SOURCE_DIR}/include/Table/*.h"
   "${CMAKE_SOURCE_DIR}/include/workers/*.h"
+  "${CMAKE_SOURCE_DIR}/include/ConectionToClient/*.h"
 )
 
 add_executable(app ${PROJECT_SOURCES} ${PROJECT_HEADERS})
@@ -41,6 +43,7 @@ target_include_directories(app PRIVATE
     "${CMAKE_SOURCE_DIR}/include/DB"
     "${CMAKE_SOURCE_DIR}/include/Table"
     ${THIRD_PARTY_INCLUDE_DIR}
+    "${CMAKE_SOURCE_DIR}/include/ConectionToClient"
 )
 
 # Drogon (HTTP-фреймворк)
