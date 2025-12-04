@@ -5,12 +5,12 @@
 
 /// Простейший контроллер для проверки статуса сервера.
 /// Маршрут: GET /status
-class StatusController : public drogon::HttpController<StatusController>
+class LANControllerForPorgramm : public drogon::HttpController<LANControllerForPorgramm>
 {
 public:
     // Описание маршрутов этого контроллера.
     METHOD_LIST_BEGIN
-    ADD_METHOD_TO(StatusController::getStatus, "/status", drogon::Get);
+    ADD_METHOD_TO(LANControllerForPorgramm::getStatus, "/status", drogon::Get);
     METHOD_LIST_END
 
     /// Единственный метод контроллера: возвращает простой JSON со статусом.

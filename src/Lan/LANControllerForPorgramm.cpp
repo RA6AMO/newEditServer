@@ -1,6 +1,6 @@
-#include "StatusController.h"
+#include "LANControllerForPorgramm.h"
 
-void StatusController::getStatus(
+void LANControllerForPorgramm::getStatus(
     const drogon::HttpRequestPtr & /*req*/,
     std::function<void(const drogon::HttpResponsePtr &)> &&callback)
 {
