@@ -1,14 +1,13 @@
 #include <drogon/drogon.h>
 
-#define PORT 8080
-#define HOST "0.0.0.0"
-// Простая инициализация Drogon без конфигурационного файла.
-// При необходимости можно заменить на загрузку config.json:
-// drogon::app().loadConfigFile("config.json");
+// Инициализация Drogon с загрузкой конфигурации из config.json
+// Конфигурация включает настройки сервера и подключения к PostgreSQL
 void initDrogon()
 {
-    // Слушать на 0.0.0.0:8080
-    drogon::app()
-        .addListener(HOST, PORT)
-        .run();
+    // Загружаем конфигурацию из config.json
+    // Это автоматически создаст подключения к БД и настроит сервер
+    drogon::app().loadConfigFile("config.json");
+    
+    // Запускаем сервер (блокирующий вызов)
+    drogon::app().run();
 }
