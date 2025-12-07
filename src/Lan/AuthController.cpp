@@ -62,6 +62,16 @@ void AuthController::login(
             return;
         }
 
+        if(!inDatabase(json["login"], json["password"]))
+        {
+            Json::Value err;
+            err["error"] = "invalid login or password";
+
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(drogon::k400BadRequest);
+            callback(resp);
+            return;
+        }
         // Заглушка: принимаем любой логин/пароль как валидные.
         const std::string token = generateToken(32);
 
@@ -88,4 +98,7 @@ void AuthController::login(
     }
 }
 
-
+bool AuthController::inDatabase(const std::string &login, const std::string &password)
+{
+    
+}
