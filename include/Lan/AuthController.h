@@ -14,10 +14,13 @@ public:
     METHOD_LIST_BEGIN
     // Обработчик POST /login
     ADD_METHOD_TO(AuthController::login, "/login", drogon::Post);
+    ADD_METHOD_TO(AuthController::register, "/register", drogon::Post);
     METHOD_LIST_END
 
     /// Основной метод авторизации.
     void login(const drogon::HttpRequestPtr &req,
+               std::function<void(const drogon::HttpResponsePtr &)> &&callback);
+    void register(const drogon::HttpRequestPtr &req,
                std::function<void(const drogon::HttpResponsePtr &)> &&callback);
 private:
     std::unordered_map<std::string, std::string> tokens;

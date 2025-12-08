@@ -102,3 +102,12 @@ bool AuthController::inDatabase(const std::string &login, const std::string &pas
 {
     
 }
+
+void AuthController::register(const drogon::HttpRequestPtr &req,
+                              std::function<void(const drogon::HttpResponsePtr &)> &&callback)
+{
+    try
+    {
+        auto jsonPtr = req->getJsonObject();
+    }
+}
