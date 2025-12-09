@@ -106,7 +106,7 @@ void AuthController::login(
             return;
         }
 
-        if(!inDatabase(json["login"], json["password"]))
+        if(!inDatabase(json["login"].asString(), json["password"].asString()))
         {
             Json::Value err;
             err["error"] = "invalid login or password";
@@ -149,7 +149,7 @@ bool AuthController::inDatabase(const std::string &login, const std::string &pas
 }
 
 drogon::Task<drogon::HttpResponsePtr>
-AuthController::registerUser(const drogon::HttpRequestPtr &req)
+AuthController::registerUser(drogon::HttpRequestPtr req)
 {
     try
     {

@@ -22,12 +22,13 @@ public:
     METHOD_LIST_END
 
     /// Основной метод авторизации.
-    void login(const drogon::HttpRequestPtr &req,
-               std::function<void(const drogon::HttpResponsePtr &)> &&callback);
-    drogon::Task<drogon::HttpResponsePtr>
-    registerUser(const drogon::HttpRequestPtr &req);
+    void login(const drogon::HttpRequestPtr &req, std::function<void(const drogon::HttpResponsePtr &)> &&callback);
+
+    drogon::Task<drogon::HttpResponsePtr> registerUser(drogon::HttpRequestPtr req);
 private:
     std::unordered_map<std::string, std::string> tokens;
+
+    bool inDatabase(const std::string &login, const std::string &password);
 };
 
 

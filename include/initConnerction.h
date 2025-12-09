@@ -6,7 +6,7 @@ void initDrogon()
 {
     // Загружаем конфигурацию из config.json
     // Это автоматически создаст подключения к БД и настроит сервер
-    drogon::app().loadConfigFile("config.json");
+    drogon::app().loadConfigFile("/root/workshop-server/config.json");
     
     // Запускаем сервер (блокирующий вызов)
     drogon::app().run();

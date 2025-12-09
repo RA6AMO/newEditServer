@@ -17,7 +17,7 @@
     "enable_session": true,
     "session_timeout": 3600,
     "client_max_body_size": 10485760,
-    "client_max_memory_body_size": 1048576
+    "client_max_memory_body_size": "1M"
   },
   "db_clients": [
     {
