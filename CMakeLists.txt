@@ -49,9 +49,16 @@ target_include_directories(app PRIVATE
 # Drogon (HTTP-фреймворк)
 find_package(Drogon REQUIRED)
 
+# Ищем системную библиотеку Argon2
+find_library(ARGON2_LIBRARY argon2)
+if(NOT ARGON2_LIBRARY)
+  message(FATAL_ERROR "libargon2 (Argon2) not found. Установите пакет libargon2-dev.")
+endif()
+
 # Линкуем библиотеки
 target_link_libraries(app PRIVATE
   Drogon::Drogon
+  ${ARGON2_LIBRARY}
 )
 
 if(WIN32)
