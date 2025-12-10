@@ -73,13 +73,12 @@ std::string generateToken(std::size_t length = 32)
 }
 } // namespace
 
-void AuthController::login(
-    const drogon::HttpRequestPtr &req,
-    std::function<void(const drogon::HttpResponsePtr &)> &&callback)
+drogon::Task<drogon::HttpResponsePtr>
+AuthController::login(drogon::HttpRequestPtr req)
 {
     try
     {
-        // Пытаемся разобрать JSON‑тело запроса.
+        // Разбираем JSON‑тело запроса.
         auto jsonPtr = req->getJsonObject();
         if (!jsonPtr)
         {
@@ -88,48 +87,111 @@ void AuthController::login(
 
             auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
             resp->setStatusCode(drogon::k400BadRequest);
-            callback(resp);
-            return;
+            co_return resp;
         }
 
         const auto &json = *jsonPtr;
 
-        // Проверяем наличие обязательных полей.
-        if (!json.isMember("login") || !json.isMember("password"))
+        // Проверяем наличие и тип полей login / password.
+        if (!json.isMember("login") || !json.isMember("password") ||
+            !json["login"].isString() || !json["password"].isString())
         {
             Json::Value err;
-            err["error"] = "missing login or password";
+            err["error"] = "missing or invalid login/password";
 
             auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
             resp->setStatusCode(drogon::k400BadRequest);
-            callback(resp);
-            return;
+            co_return resp;
         }
 
-        if(!inDatabase(json["login"].asString(), json["password"].asString()))
+        const std::string login = json["login"].asString();
+        const std::string password = json["password"].asString();
+
+        // Валидация как в Qt‑клиенте.
+        if (!isValidInput(login, InputType::LOG) || !isValidInput(password, InputType::PAS))
         {
             Json::Value err;
-            err["error"] = "invalid login or password";
+            err["error"] = "invalid login or password format";
 
             auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
             resp->setStatusCode(drogon::k400BadRequest);
-            callback(resp);
-            return;
+            co_return resp;
         }
-        // Заглушка: принимаем любой логин/пароль как валидные.
-        const std::string token = generateToken(32);
 
-        // Сохраняем IP клиента вместо логина.
-        auto peerAddr = req->getPeerAddr();
-        std::string clientIp = peerAddr.toIp(); // только IP (без порта)
-        tokens[token] = clientIp;
+        // Асинхронный запрос к БД: поиск пользователя по логину.
+        using namespace drogon;
+        using namespace drogon::orm;
 
-        Json::Value body;
-        body["token"] = token;
+        auto dbClient = app().getDbClient("default");
 
-        auto resp = drogon::HttpResponse::newHttpJsonResponse(body);
-        resp->setStatusCode(drogon::k200OK);
-        callback(resp);
+        try
+        {
+            // Ищем пользователя в БД.
+            auto resultRows = co_await dbClient->execSqlCoro(
+                "SELECT id, password_hash FROM users WHERE username = $1",
+                login);
+
+            // Если пользователь не найден.
+            if (resultRows.empty())
+            {
+                Json::Value err;
+                err["error"] = "invalid login or password";
+
+                auto resp = HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(k401Unauthorized);
+                co_return resp;
+            }
+
+            const int64_t userId = resultRows[0]["id"].as<int64_t>();
+            const std::string passwordHash = resultRows[0]["password_hash"].as<std::string>();
+
+            // Проверяем пароль с помощью Argon2id.
+            int verifyResult = argon2id_verify(
+                passwordHash.c_str(),
+                password.data(),
+                password.size());
+
+            if (verifyResult != ARGON2_OK)
+            {
+                Json::Value err;
+                err["error"] = "invalid login or password";
+
+                auto resp = HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(k401Unauthorized);
+                co_return resp;
+            }
+
+            // Пароль верный. Генерируем токен и получаем IP клиента.
+            const std::string token = generateToken(32);
+            auto peerAddr = req->getPeerAddr();
+            std::string clientIp = peerAddr.toIp(); // только IP (без порта)
+
+            // Обновляем last_login_at, last_ip и last_token.
+            co_await dbClient->execSqlCoro(
+                "UPDATE users SET last_login_at = now(), last_ip = $2, last_token = $3 WHERE id = $1",
+                userId,
+                clientIp,
+                token);
+
+            // Сохраняем токен в памяти.
+            tokens[token] = clientIp;
+
+            Json::Value body;
+            body["token"] = token;
+
+            auto resp = HttpResponse::newHttpJsonResponse(body);
+            resp->setStatusCode(k200OK);
+            co_return resp;
+        }
+        catch (const DrogonDbException &)
+        {
+            Json::Value err;
+            err["error"] = "db error";
+
+            auto resp = HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(k500InternalServerError);
+            co_return resp;
+        }
     }
     catch (const std::exception &)
     {
@@ -138,15 +200,10 @@ void AuthController::login(
 
         auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
         resp->setStatusCode(drogon::k500InternalServerError);
-        callback(resp);
+        co_return resp;
     }
 }
 
-bool AuthController::inDatabase(const std::string &login, const std::string &password)
-{
-    // TODO: реализовать проверку логина и пароля (сравнение Argon2-хеша) в базе данных.
-    return false;
-}
 
 drogon::Task<drogon::HttpResponsePtr>
 AuthController::registerUser(drogon::HttpRequestPtr req)
@@ -238,7 +295,7 @@ AuthController::registerUser(drogon::HttpRequestPtr req)
         try
         {
             auto resultRows = co_await dbClient->execSqlCoro(
-                "INSERT INTO users(login, password_hash) "
+                "INSERT INTO users(username, password_hash) "
                 "VALUES($1, $2) RETURNING id",
                 login,
                 passwordHash);

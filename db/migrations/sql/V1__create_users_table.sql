@@ -6,3 +6,4 @@ CREATE TABLE IF NOT EXISTS public.users (
     updated_at    TIMESTAMPTZ    NOT NULL DEFAULT now(),
     last_login_at TIMESTAMPTZ    NULL
 );
+
