@@ -19,12 +19,16 @@ public:
     // Обработчик POST /login
     ADD_METHOD_TO(AuthController::login, "/login", drogon::Post);
     ADD_METHOD_TO(AuthController::registerUser, "/register", drogon::Post);
+    ADD_METHOD_TO(AuthController::autoConnect, "/autoConnect", drogon::Post);
     METHOD_LIST_END
 
     /// Основной метод авторизации.
     drogon::Task<drogon::HttpResponsePtr> login(drogon::HttpRequestPtr req);
 
     drogon::Task<drogon::HttpResponsePtr> registerUser(drogon::HttpRequestPtr req);
+
+    /// Автоматическое подключение по токену.
+    drogon::Task<drogon::HttpResponsePtr> autoConnect(drogon::HttpRequestPtr req);
 private:
     std::unordered_map<std::string, std::string> tokens;
 

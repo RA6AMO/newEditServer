@@ -332,3 +332,106 @@ AuthController::registerUser(drogon::HttpRequestPtr req)
         co_return resp;
     }
 }
+
+drogon::Task<drogon::HttpResponsePtr>
+AuthController::autoConnect(drogon::HttpRequestPtr req)
+{
+    try
+    {
+        // Разбираем JSON‑тело запроса.
+        auto jsonPtr = req->getJsonObject();
+        if (!jsonPtr)
+        {
+            Json::Value err;
+            err["error"] = "invalid json";
+
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(drogon::k400BadRequest);
+            co_return resp;
+        }
+
+        const auto &json = *jsonPtr;
+
+        // Проверяем наличие и тип поля token.
+        if (!json.isMember("token") || !json["token"].isString())
+        {
+            Json::Value err;
+            err["error"] = "missing or invalid token";
+
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(drogon::k400BadRequest);
+            co_return resp;
+        }
+
+        const std::string token = json["token"].asString();
+        
+        // Получаем IP клиента.
+        auto peerAddr = req->getPeerAddr();
+        std::string clientIp = peerAddr.toIp(); // только IP (без порта)
+
+        // Асинхронный запрос к БД: поиск пользователя по токену.
+        using namespace drogon;
+        using namespace drogon::orm;
+
+        auto dbClient = app().getDbClient("default");
+
+        try
+        {
+            // Ищем пользователя в БД по токену.
+            auto resultRows = co_await dbClient->execSqlCoro(
+                "SELECT id, last_ip FROM users WHERE last_token = $1",
+                token);
+
+            // Если пользователь не найден или токен не совпадает.
+            if (resultRows.empty())
+            {
+                Json::Value err;
+                err["error"] = "invalid token";
+
+                auto resp = HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(k401Unauthorized);
+                co_return resp;
+            }
+
+            const std::string storedIp = resultRows[0]["last_ip"].as<std::string>();
+
+            // Проверяем, совпадает ли IP.
+            if (storedIp != clientIp)
+            {
+                Json::Value err;
+                err["error"] = "ip mismatch";
+
+                auto resp = HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(k401Unauthorized);
+                co_return resp;
+            }
+
+            // IP и токен совпадают. Возвращаем успешный ответ с токеном.
+            Json::Value body;
+            body["token"] = token;
+            body["status"] = "ok";
+
+            auto resp = HttpResponse::newHttpJsonResponse(body);
+            resp->setStatusCode(k200OK);
+            co_return resp;
+        }
+        catch (const DrogonDbException &)
+        {
+            Json::Value err;
+            err["error"] = "db error";
+
+            auto resp = HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(k500InternalServerError);
+            co_return resp;
+        }
+    }
+    catch (const std::exception &)
+    {
+        Json::Value err;
+        err["error"] = "internal error";
+
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(drogon::k500InternalServerError);
+        co_return resp;
+    }
+}
