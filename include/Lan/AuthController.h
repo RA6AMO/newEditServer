@@ -29,9 +29,6 @@ public:
 
     /// Автоматическое подключение по токену.
     drogon::Task<drogon::HttpResponsePtr> autoConnect(drogon::HttpRequestPtr req);
-private:
-    std::unordered_map<std::string, std::string> tokens;
-
 };
 
 

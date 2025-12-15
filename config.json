@@ -28,5 +28,13 @@
       "user": "LEXXES",
       "password": "LEXXES123"
     }
+  ],
+  "plugins": [
+    {
+      "name": "AppCache",
+      "config": {
+        "token_ttl_sec": 3600
+      }
+    }
   ]
 }

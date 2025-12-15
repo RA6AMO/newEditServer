@@ -1,4 +1,5 @@
 #include "AuthController.h"
+#include "AppCache.h"
 
 #include <drogon/drogon.h>
 #include <drogon/orm/DbClient.h>
@@ -173,8 +174,9 @@ AuthController::login(drogon::HttpRequestPtr req)
                 clientIp,
                 token);
 
-            // Сохраняем токен в памяти.
-            tokens[token] = clientIp;
+            // Сохраняем токен в кэше.
+            auto cache = app().getPlugin<AppCache>();
+            cache->putToken(token, userId, clientIp);
 
             Json::Value body;
             body["token"] = token;
@@ -369,10 +371,40 @@ AuthController::autoConnect(drogon::HttpRequestPtr req)
         auto peerAddr = req->getPeerAddr();
         std::string clientIp = peerAddr.toIp(); // только IP (без порта)
 
-        // Асинхронный запрос к БД: поиск пользователя по токену.
         using namespace drogon;
         using namespace drogon::orm;
 
+        // Сначала проверяем кэш.
+        auto cache = app().getPlugin<AppCache>();
+        auto tokenInfoOpt = cache->getToken(token);
+
+        if (tokenInfoOpt)
+        {
+            // Токен найден в кэше. Проверяем IP.
+            if (tokenInfoOpt->clientIp == clientIp)
+            {
+                // Всё совпадает - возвращаем успешный ответ без обращения к БД.
+                Json::Value body;
+                body["token"] = token;
+                body["status"] = "ok";
+
+                auto resp = HttpResponse::newHttpJsonResponse(body);
+                resp->setStatusCode(k200OK);
+                co_return resp;
+            }
+            else
+            {
+                // IP не совпадает.
+                Json::Value err;
+                err["error"] = "ip mismatch";
+
+                auto resp = HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(k401Unauthorized);
+                co_return resp;
+            }
+        }
+
+        // Токена нет в кэше (или протух). Проверяем в БД.
         auto dbClient = app().getDbClient("default");
 
         try
@@ -393,6 +425,7 @@ AuthController::autoConnect(drogon::HttpRequestPtr req)
                 co_return resp;
             }
 
+            const int64_t userId = resultRows[0]["id"].as<int64_t>();
             const std::string storedIp = resultRows[0]["last_ip"].as<std::string>();
 
             // Проверяем, совпадает ли IP.
@@ -406,7 +439,10 @@ AuthController::autoConnect(drogon::HttpRequestPtr req)
                 co_return resp;
             }
 
-            // IP и токен совпадают. Возвращаем успешный ответ с токеном.
+            // IP и токен совпадают. Сохраняем в кэш для следующих запросов.
+            cache->putToken(token, userId, clientIp);
+
+            // Возвращаем успешный ответ с токеном.
             Json::Value body;
             body["token"] = token;
             body["status"] = "ok";
