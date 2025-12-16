@@ -1,21 +1,30 @@
 #pragma once
 
+#include "AuthController.h"
+
+
 #include <drogon/HttpController.h>
 #include <drogon/drogon.h>
 #include <json/json.h>
 #include <functional>
 #include <map>
+#include <vector>
+#include <string>
+
+// Список разрешённых таблиц (whitelist). Inline переменная нужна, т.к. это заголовок.
+inline const std::vector<std::string> kTableNames = {
+    "milling_tool_catalog",
+};
 
 class TableInfoSender : public drogon::HttpController<TableInfoSender>
 {
 public:
     METHOD_LIST_BEGIN
+    // GET + headers: token/nodeId передаются в заголовках запроса.
     ADD_METHOD_TO(TableInfoSender::getTableInfo, "/table/get", drogon::Get);
     METHOD_LIST_END
 
     drogon::Task<drogon::HttpResponsePtr> getTableInfo(drogon::HttpRequestPtr req);
 private:
-    std::map<std::string, std::string> defoltTableNames{
-        {"All_Default_Instrument_Table", "public.milling_tool_catalog"},
-    }
+
 };

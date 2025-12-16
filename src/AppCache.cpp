@@ -1,7 +1,6 @@
 #include "AppCache.h"
 #include <drogon/drogon.h>
 
-DROGON_PLUGIN(AppCache);
 
 void AppCache::initAndStart(const Json::Value &config)
 {
@@ -18,10 +17,9 @@ void AppCache::shutdown()
     tokenByValue_.clear();
 }
 
-void AppCache::putToken(std::string token, int64_t userId, std::string clientIp)
+void AppCache::putToken(std::string token, std::string clientIp)
 {
     TokenInfo info;
-    info.userId = userId;
     info.clientIp = std::move(clientIp);
     info.expiresAt = std::chrono::steady_clock::now() + tokenTtl_;
 
@@ -29,7 +27,7 @@ void AppCache::putToken(std::string token, int64_t userId, std::string clientIp)
     tokenByValue_[std::move(token)] = std::move(info);
 }
 
-std::optional<AppCache::TokenInfo> AppCache::getToken(const std::string &token) const
+std::optional<AppCache::TokenInfo> AppCache::getToken(const std::string &token)
 {
     const auto now = std::chrono::steady_clock::now();
 

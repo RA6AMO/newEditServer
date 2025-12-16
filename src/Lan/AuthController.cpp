@@ -74,6 +74,84 @@ std::string generateToken(std::size_t length = 32)
 }
 } // namespace
 
+drogon::Task<TokenValidator::Status>
+TokenValidator::check(const std::string &token, const std::string &clientIp) const
+{
+    using namespace drogon;
+    using namespace drogon::orm;
+
+    // 1) Сначала проверяем кэш.
+    auto cache = app().getPlugin<AppCache>();
+    auto tokenInfoOpt = cache->getToken(token);
+    if (tokenInfoOpt)
+    {
+        if (tokenInfoOpt->clientIp == clientIp)
+        {
+            co_return Status::Ok;
+        }
+        co_return Status::IpMismatch;
+    }
+
+    // 2) Токена нет в кэше (или протух). Проверяем в БД.
+    auto dbClient = app().getDbClient("default");
+    try
+    {
+        auto resultRows = co_await dbClient->execSqlCoro(
+            "SELECT last_ip FROM users WHERE last_token = $1",
+            token);
+
+        if (resultRows.empty())
+        {
+            co_return Status::InvalidToken;
+        }
+
+        const std::string storedIp = resultRows[0]["last_ip"].as<std::string>();
+        if (storedIp != clientIp)
+        {
+            co_return Status::IpMismatch;
+        }
+
+        // IP и токен совпадают — кладём в кэш для следующих запросов.
+        cache->putToken(token, clientIp);
+        co_return Status::Ok;
+    }
+    catch (const DrogonDbException &)
+    {
+        co_return Status::DbError;
+    }
+}
+
+const char *TokenValidator::toError(Status status)
+{
+    switch (status)
+    {
+    case Status::InvalidToken:
+        return "invalid token";
+    case Status::IpMismatch:
+        return "ip mismatch";
+    case Status::DbError:
+        return "db error";
+    case Status::Ok:
+    default:
+        return "";
+    }
+}
+
+drogon::HttpStatusCode TokenValidator::toHttpCode(Status status)
+{
+    switch (status)
+    {
+    case Status::Ok:
+        return drogon::k200OK;
+    case Status::InvalidToken:
+    case Status::IpMismatch:
+        return drogon::k401Unauthorized;
+    case Status::DbError:
+    default:
+        return drogon::k500InternalServerError;
+    }
+}
+
 drogon::Task<drogon::HttpResponsePtr>
 AuthController::login(drogon::HttpRequestPtr req)
 {
@@ -176,7 +254,7 @@ AuthController::login(drogon::HttpRequestPtr req)
 
             // Сохраняем токен в кэше.
             auto cache = app().getPlugin<AppCache>();
-            cache->putToken(token, userId, clientIp);
+            cache->putToken(token, clientIp);
 
             Json::Value body;
             body["token"] = token;
@@ -371,95 +449,26 @@ AuthController::autoConnect(drogon::HttpRequestPtr req)
         auto peerAddr = req->getPeerAddr();
         std::string clientIp = peerAddr.toIp(); // только IP (без порта)
 
-        using namespace drogon;
-        using namespace drogon::orm;
+        TokenValidator validator;
+        auto status = co_await validator.check(token, clientIp);
 
-        // Сначала проверяем кэш.
-        auto cache = app().getPlugin<AppCache>();
-        auto tokenInfoOpt = cache->getToken(token);
-
-        if (tokenInfoOpt)
+        if (status == TokenValidator::Status::Ok)
         {
-            // Токен найден в кэше. Проверяем IP.
-            if (tokenInfoOpt->clientIp == clientIp)
-            {
-                // Всё совпадает - возвращаем успешный ответ без обращения к БД.
-                Json::Value body;
-                body["token"] = token;
-                body["status"] = "ok";
-
-                auto resp = HttpResponse::newHttpJsonResponse(body);
-                resp->setStatusCode(k200OK);
-                co_return resp;
-            }
-            else
-            {
-                // IP не совпадает.
-                Json::Value err;
-                err["error"] = "ip mismatch";
-
-                auto resp = HttpResponse::newHttpJsonResponse(err);
-                resp->setStatusCode(k401Unauthorized);
-                co_return resp;
-            }
-        }
-
-        // Токена нет в кэше (или протух). Проверяем в БД.
-        auto dbClient = app().getDbClient("default");
-
-        try
-        {
-            // Ищем пользователя в БД по токену.
-            auto resultRows = co_await dbClient->execSqlCoro(
-                "SELECT id, last_ip FROM users WHERE last_token = $1",
-                token);
-
-            // Если пользователь не найден или токен не совпадает.
-            if (resultRows.empty())
-            {
-                Json::Value err;
-                err["error"] = "invalid token";
-
-                auto resp = HttpResponse::newHttpJsonResponse(err);
-                resp->setStatusCode(k401Unauthorized);
-                co_return resp;
-            }
-
-            const int64_t userId = resultRows[0]["id"].as<int64_t>();
-            const std::string storedIp = resultRows[0]["last_ip"].as<std::string>();
-
-            // Проверяем, совпадает ли IP.
-            if (storedIp != clientIp)
-            {
-                Json::Value err;
-                err["error"] = "ip mismatch";
-
-                auto resp = HttpResponse::newHttpJsonResponse(err);
-                resp->setStatusCode(k401Unauthorized);
-                co_return resp;
-            }
-
-            // IP и токен совпадают. Сохраняем в кэш для следующих запросов.
-            cache->putToken(token, userId, clientIp);
-
-            // Возвращаем успешный ответ с токеном.
             Json::Value body;
             body["token"] = token;
             body["status"] = "ok";
 
-            auto resp = HttpResponse::newHttpJsonResponse(body);
-            resp->setStatusCode(k200OK);
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(body);
+            resp->setStatusCode(drogon::k200OK);
             co_return resp;
         }
-        catch (const DrogonDbException &)
-        {
-            Json::Value err;
-            err["error"] = "db error";
 
-            auto resp = HttpResponse::newHttpJsonResponse(err);
-            resp->setStatusCode(k500InternalServerError);
-            co_return resp;
-        }
+        Json::Value err;
+        err["error"] = TokenValidator::toError(status);
+
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(TokenValidator::toHttpCode(status));
+        co_return resp;
     }
     catch (const std::exception &)
     {

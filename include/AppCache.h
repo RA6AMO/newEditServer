@@ -3,7 +3,6 @@
 #include <drogon/plugins/Plugin.h>
 #include <json/json.h>
 #include <chrono>
-#include <cstdint>
 #include <optional>
 #include <shared_mutex>
 #include <string>
@@ -15,7 +14,6 @@ public:
     /// Структура для хранения информации о токене.
     struct TokenInfo
     {
-        int64_t userId = 0;
         std::string clientIp;
         std::chrono::steady_clock::time_point expiresAt;
     };
@@ -29,15 +27,14 @@ public:
 
     /// Сохранить токен в кэш.
     /// @param token Строка токена
-    /// @param userId ID пользователя
     /// @param clientIp IP адрес клиента
-    void putToken(std::string token, int64_t userId, std::string clientIp);
+    void putToken(std::string token, std::string clientIp);
 
     /// Получить информацию о токене из кэша.
     /// Автоматически удаляет протухшие токены (lazy eviction).
     /// @param token Строка токена
     /// @return TokenInfo если токен найден и не протух, иначе std::nullopt
-    std::optional<TokenInfo> getToken(const std::string &token) const;
+    std::optional<TokenInfo> getToken(const std::string &token);
 
     /// Удалить токен из кэша.
     /// @param token Строка токена
