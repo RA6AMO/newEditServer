@@ -58,6 +58,7 @@ drogon::Task<drogon::HttpResponsePtr> TableInfoSender::getTableInfo(drogon::Http
     try
     {
         nodeId = std::stoi(nodeIdHeader);
+        nodeId -= 1;
     }
     catch (...)
     {
