@@ -1,8 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
 
+# vcpkg toolchain для minio-cpp
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+  set(CMAKE_TOOLCHAIN_FILE "/opt/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+endif()
+
 project(workshop_server LANGUAGES C CXX)
 
 find_package(Drogon REQUIRED)
+find_package(miniocpp CONFIG REQUIRED)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,6 +48,7 @@ target_include_directories(app PRIVATE
     "${CMAKE_SOURCE_DIR}/include/TreeWidgets"
     "${CMAKE_SOURCE_DIR}/include/DB"
     "${CMAKE_SOURCE_DIR}/include/Table"
+    "${CMAKE_SOURCE_DIR}/include/Storage"
     ${THIRD_PARTY_INCLUDE_DIR}
     "${CMAKE_SOURCE_DIR}/include/Lan"
 )
@@ -55,11 +62,21 @@ if(NOT ARGON2_LIBRARY)
   message(FATAL_ERROR "libargon2 (Argon2) not found. Установите пакет libargon2-dev.")
 endif()
 
+# Ищем библиотеку UUID
+find_library(UUID_LIBRARY uuid)
+if(NOT UUID_LIBRARY)
+  message(WARNING "libuuid not found. UUID generation may not work correctly.")
+endif()
+
 # Линкуем библиотеки
 target_link_libraries(app PRIVATE
   Drogon::Drogon
   ${ARGON2_LIBRARY}
+  miniocpp::miniocpp
 )
+if(UUID_LIBRARY)
+  target_link_libraries(app PRIVATE ${UUID_LIBRARY})
+endif()
 
 if(WIN32)
   # Устаревшие системные зависимости нужны только при сборке под Windows

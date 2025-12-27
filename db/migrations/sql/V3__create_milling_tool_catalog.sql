@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS public.milling_tool_catalog (
     notes TEXT NULL,
 
     -- image_url: URL или путь к изображению (сами картинки лучше хранить в файловом хранилище/объектном хранилище)
-    image_url TEXT NULL,
+    image_exists BOOLEAN NULL DEFAULT FALSE,
 
     -- constraints: количества не могут быть отрицательными (NULL допустим для MVP)
     CONSTRAINT milling_tool_catalog_qty_on_stock_nonnegative_chk
@@ -59,3 +59,30 @@ CREATE INDEX IF NOT EXISTS idx_milling_tool_catalog_tool_type_id
 
 CREATE INDEX IF NOT EXISTS idx_milling_tool_catalog_brand_id
     ON public.milling_tool_catalog (brand_id);
+
+-- Таблица изображений для инструментов (1:1 связь с milling_tool_catalog)
+-- Хранит ссылки на MinIO для большого и маленького изображений, а также метаданные для ImageWithLink
+CREATE TABLE IF NOT EXISTS public.milling_tool_images (
+    -- tool_id: ссылка на инструмент (PRIMARY KEY, т.к. связь 1:1)
+    tool_id BIGINT PRIMARY KEY REFERENCES public.milling_tool_catalog(id) ON DELETE CASCADE,
+
+    -- big: большое изображение (оригинал)
+    big_bucket TEXT NULL,
+    big_object_key TEXT NULL,
+    big_mime_type TEXT NULL,
+    big_size_bytes BIGINT NULL,
+
+    -- small: маленькое изображение (превью, копия большого)
+    small_bucket TEXT NULL,
+    small_object_key TEXT NULL,
+    small_mime_type TEXT NULL,
+    small_size_bytes BIGINT NULL,
+
+    -- метаданные для ImageWithLink (опционально)
+    link_name TEXT NULL,
+    link_url TEXT NULL,
+
+    -- временные метки
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

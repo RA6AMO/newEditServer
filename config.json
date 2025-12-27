@@ -36,5 +36,12 @@
         "token_ttl_sec": 3600
       }
     }
-  ]
+  ],
+  "minio": {
+    "endpoint": "192.168.56.101:9000",
+    "access_key": "root",
+    "secret_key": "root123longpassword",
+    "bucket": "fordata",
+    "use_ssl": false
+  }
 }
