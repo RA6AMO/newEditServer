@@ -40,12 +40,14 @@ private:
     std::unique_ptr<ITableHandler> createHandler(const std::string &tableName) const;
 
     /// Генерация object key для MinIO
+    /// @param tablePrefix префикс/имя таблицы (например: "milling_tool_catalog")
     /// @param rowId ID записи
     /// @param dbName имя колонки
     /// @param role роль файла (image/image_small)
     /// @param filename оригинальное имя файла
-    /// @return object key (например: "milling_tool_catalog/123/image.png")
-    std::string generateObjectKey(int64_t rowId,
+    /// @return object key (например: "milling_tool_catalog/123/image_image_<uuid>.png")
+    std::string generateObjectKey(const std::string &tablePrefix,
+                                  int64_t rowId,
                                   const std::string &dbName,
                                   const std::string &role,
                                   const std::string &filename) const;

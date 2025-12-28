@@ -49,8 +49,9 @@ target_include_directories(app PRIVATE
     "${CMAKE_SOURCE_DIR}/include/DB"
     "${CMAKE_SOURCE_DIR}/include/Table"
     "${CMAKE_SOURCE_DIR}/include/Storage"
-    ${THIRD_PARTY_INCLUDE_DIR}
     "${CMAKE_SOURCE_DIR}/include/Lan"
+    "${CMAKE_SOURCE_DIR}/include/Loger"
+    ${THIRD_PARTY_INCLUDE_DIR}
 )
 
 # Drogon (HTTP-фреймворк)

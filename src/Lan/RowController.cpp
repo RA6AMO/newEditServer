@@ -1,6 +1,7 @@
 #include "Lan/RowController.h"
 #include "Config/MinioConfig.h"
 #include "Storage/MinioClient.h"
+#include "Loger/Logger.h"
 
 #include <drogon/drogon.h>
 #include <drogon/MultiPart.h>
@@ -70,6 +71,11 @@ std::string generateUUID()
     return uuid.str();
 #endif
 }
+
+struct BadRequestError : public std::runtime_error
+{
+    using std::runtime_error::runtime_error;
+};
 } // namespace
 
 drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestPtr req)
@@ -158,26 +164,63 @@ drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestP
             }
             rowId = resultRows[0]["id"].as<int64_t>();
 
-            // 9. INSERT в таблицу изображений (если нужна)
-            std::string imageTableName = handler->getImageTableName();
-            if (!imageTableName.empty())
+            // 9. Предвалидация image-операций до upload (чтобы не коммитить БД при неприлипших attachments)
+            const std::string imageTableName = handler->getImageTableName();
+
+            // Если таблица не поддерживает images, но файлы передали — bad_request
+            if (imageTableName.empty() && !parsed.attachments.empty())
             {
-                // Вставляем запись с пустыми ключами
+                throw BadRequestError("Attachments provided, but this table does not support images");
+            }
+
+            // Ключи заранее + UPDATE-запрос заранее (до загрузки в MinIO)
+            std::map<std::string, std::string> objectKeysMap; // attachment id -> object key
+            std::string imagesUpdateQuery;
+
+            if (!parsed.attachments.empty())
+            {
+                const std::string tablePrefix = handler->getMainTableName();
+
+                for (const auto &attachment : parsed.attachments)
+                {
+                    const std::string objectKey =
+                        generateObjectKey(tablePrefix, rowId, attachment.dbName, attachment.role, attachment.filename);
+                    objectKeysMap[attachment.id] = objectKey;
+                }
+
+                const Json::Value &meta = parsed.payload.get("meta", Json::objectValue);
+                imagesUpdateQuery = handler
+                                        ->buildImagesUpdateQuery(
+                                            rowId, parsed.attachments, minioClientConfig.bucket, objectKeysMap, meta)
+                                        .first;
+
+                // Ключевое: attachments есть, но UPDATE пустой => роли/id не сматчились => 400
+                if (imagesUpdateQuery.empty())
+                {
+                    throw BadRequestError(
+                        "Attachments provided, but none can be mapped to image columns (check attachment roles/id)");
+                }
+            }
+
+            // 10. INSERT в таблицу изображений — только если реально есть файлы
+            if (!imageTableName.empty() && !parsed.attachments.empty())
+            {
                 std::ostringstream imageInsertQuery;
                 imageInsertQuery << "INSERT INTO public." << imageTableName << " (tool_id) VALUES (" << rowId << ")";
                 co_await transPtr->execSqlCoro(imageInsertQuery.str());
             }
 
-            // 10. Загрузка файлов в MinIO
-            std::map<std::string, std::string> objectKeysMap; // attachment id -> object key
-
+            // 11. Загрузка файлов в MinIO (после успешной предвалидации imagesUpdateQuery)
             for (const auto &attachment : parsed.attachments)
             {
-                // Генерируем object key
-                std::string objectKey = generateObjectKey(rowId, attachment.dbName, attachment.role, attachment.filename);
-                objectKeysMap[attachment.id] = objectKey;
+                auto it = objectKeysMap.find(attachment.id);
+                if (it == objectKeysMap.end())
+                {
+                    throw std::runtime_error("Internal: object key not found for attachment id: " + attachment.id);
+                }
 
-                // Загружаем в MinIO
+                const std::string &objectKey = it->second;
+
                 bool uploadSuccess = minioClient.putObject(
                     minioClientConfig.bucket,
                     objectKey,
@@ -192,19 +235,11 @@ drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestP
                 uploadedObjectKeys.push_back(objectKey);
             }
 
-            // 11. UPDATE таблицы изображений с реальными ключами
-            if (!imageTableName.empty() && !parsed.attachments.empty())
+            // 12. UPDATE таблицы изображений (и image_exists) — только если были вложения
+            if (!imagesUpdateQuery.empty())
             {
-                const Json::Value &meta = parsed.payload.get("meta", Json::objectValue);
-                auto [updateQuery, _] = handler->buildImagesUpdateQuery(
-                    rowId, parsed.attachments, minioClientConfig.bucket, objectKeysMap, meta);
+                co_await transPtr->execSqlCoro(imagesUpdateQuery);
 
-                if (!updateQuery.empty())
-                {
-                    co_await transPtr->execSqlCoro(updateQuery);
-                }
-
-                // 11.1. UPDATE image_exists = TRUE в основной таблице
                 std::string imageExistsQuery = handler->buildImageExistsUpdateQuery(rowId);
                 if (!imageExistsQuery.empty())
                 {
@@ -212,19 +247,27 @@ drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestP
                 }
             }
 
-            // 12. COMMIT транзакции
+            // 13. COMMIT транзакции
             co_await transPtr->execSqlCoro("COMMIT");
             committed = true;
             finalResp = makeSuccessResponse(rowId);
         }
+        catch (const BadRequestError &e)
+        {
+            opErrorMessage = e.what();
+            LOG_WARNING(std::string("addRow bad_request: ") + opErrorMessage);
+            finalResp = makeErrorResponse("bad_request", opErrorMessage, k400BadRequest);
+        }
         catch (const std::exception &e)
         {
             opErrorMessage = e.what();
+            LOG_ERROR(std::string("addRow internal error: ") + opErrorMessage);
             finalResp = makeErrorResponse("internal", "Database or storage error: " + opErrorMessage, k500InternalServerError);
         }
         catch (...)
         {
             opErrorMessage = "unknown error";
+            LOG_ERROR("addRow internal error: unknown error");
             finalResp = makeErrorResponse("internal", "Database or storage error: " + opErrorMessage, k500InternalServerError);
         }
 
@@ -247,7 +290,11 @@ drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestP
             // Удаляем загруженные файлы из MinIO
             for (auto it = uploadedObjectKeys.rbegin(); it != uploadedObjectKeys.rend(); ++it)
             {
-                minioClient.deleteObject(minioClientConfig.bucket, *it);
+                bool deleted = minioClient.deleteObject(minioClientConfig.bucket, *it);
+                if (!deleted)
+                {
+                    LOG_WARNING(std::string("Failed to cleanup MinIO object during rollback: ") + *it);
+                }
             }
         }
 
@@ -255,6 +302,7 @@ drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestP
     }
     catch (const std::exception &e)
     {
+        LOG_ERROR(std::string("addRow fatal error: ") + e.what());
         co_return makeErrorResponse("internal", "Internal error: " + std::string(e.what()), k500InternalServerError);
     }
 }
@@ -338,7 +386,8 @@ std::unique_ptr<ITableHandler> RowController::createHandler(const std::string &t
     return nullptr;
 }
 
-std::string RowController::generateObjectKey(int64_t rowId,
+std::string RowController::generateObjectKey(const std::string &tablePrefix,
+                                            int64_t rowId,
                                             const std::string &dbName,
                                             const std::string &role,
                                             const std::string &filename) const
@@ -347,7 +396,7 @@ std::string RowController::generateObjectKey(int64_t rowId,
     // Например: milling_tool_catalog/123/image_image_550e8400-e29b-41d4-a716-446655440000.png
     
     std::ostringstream key;
-    key << "milling_tool_catalog/" << rowId << "/" << dbName << "_" << role << "_" << generateUUID();
+    key << tablePrefix << "/" << rowId << "/" << dbName << "_" << role << "_" << generateUUID();
     
     // Добавляем расширение из оригинального имени файла, если есть
     if (!filename.empty())
