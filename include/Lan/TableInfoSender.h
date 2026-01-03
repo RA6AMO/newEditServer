@@ -2,7 +2,7 @@
 
 #include "AuthController.h"
 
-
+#include "allTableList.h"
 #include <drogon/HttpController.h>
 #include <drogon/drogon.h>
 #include <json/json.h>
@@ -12,9 +12,7 @@
 #include <string>
 
 // Список разрешённых таблиц (whitelist). Inline переменная нужна, т.к. это заголовок.
-inline const std::vector<std::string> kTableNames = {
-    "milling_tool_catalog",
-};
+
 
 class TableInfoSender : public drogon::HttpController<TableInfoSender>
 {

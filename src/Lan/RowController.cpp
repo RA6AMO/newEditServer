@@ -1,6 +1,6 @@
 #include "Lan/RowController.h"
-#include "Config/MinioConfig.h"
 #include "Storage/MinioClient.h"
+#include "Storage/MinioPlugin.h"
 #include "Loger/Logger.h"
 
 #include <drogon/drogon.h>
@@ -123,10 +123,15 @@ drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestP
             co_return makeErrorResponse("bad_request", "Table '" + tableName + "' is not supported", k400BadRequest);
         }
 
-        // 5. Получение конфигурации MinIO (вынесено из config.json в код)
-        MinioClient::Config minioClientConfig = workshop::config::getMinioConfig();
+        // 5. Получаем общий MinIO-клиент из плагина (один на всё приложение)
+        auto minioPlugin = app().getPlugin<MinioPlugin>();
+        if (!minioPlugin)
+        {
+            co_return makeErrorResponse("internal", "MinioPlugin is not initialized", k500InternalServerError);
+        }
 
-        MinioClient minioClient(minioClientConfig);
+        MinioClient &minioClient = minioPlugin->client();
+        const auto &minioClientConfig = minioPlugin->minioConfig();
 
         // 6. Валидация полей
         if (!parsed.payload.isMember("fields") || !parsed.payload.isMember("types"))
