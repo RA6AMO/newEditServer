@@ -1,4 +1,5 @@
 #include "TableInfoSender.h"
+#include "TableInfoCache.h"
 
 #include <drogon/drogon.h>
 #include <drogon/orm/DbClient.h>
@@ -81,45 +82,15 @@ drogon::Task<drogon::HttpResponsePtr> TableInfoSender::getTableInfo(drogon::Http
 
     try
     {
-        auto dbClient = app().getDbClient("default");
-
-        // Берём метаданные столбцов из information_schema.
-        // Для numeric дополнительно достаём precision/scale (scale = "величина округления").
-        auto rows = co_await dbClient->execSqlCoro(
-            "SELECT "
-            "  ordinal_position, "
-            "  column_name, "
-            "  data_type, "
-            "  udt_name, "
-            "  numeric_precision, "
-            "  numeric_scale "
-            "FROM information_schema.columns "
-            "WHERE table_schema = 'public' "
-            "  AND table_name   = $1 "
-            "ORDER BY ordinal_position",
-            tableName);
-
-        for (const auto &r : rows)
+        auto cache = app().getPlugin<TableInfoCache>();
+        if (!cache)
         {
-            Json::Value col;
-            col["name"] = r["column_name"].as<std::string>();
-
-            // data_type более “человеческий”, udt_name полезен для доменов/enum/массивов.
-            col["type"] = r["data_type"].as<std::string>();
-            col["udt_name"] = r["udt_name"].as<std::string>();
-
-            // precision/scale — только если они реально есть (обычно для numeric).
-            if (!r["numeric_precision"].isNull())
-            {
-                col["numeric_precision"] = r["numeric_precision"].as<int>();
-            }
-            if (!r["numeric_scale"].isNull())
-            {
-                col["numeric_scale"] = r["numeric_scale"].as<int>();
-            }
-
-            data["columns"].append(std::move(col));
+            co_return makeJsonResponse(makeErrorObj("internal", "TableInfoCache is not initialized"),
+                                       k500InternalServerError);
         }
+
+        auto cols = co_await cache->getColumns(tableName);
+        data["columns"] = *cols;
 
         Json::Value root;
         root["ok"] = true;

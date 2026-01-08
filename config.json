@@ -37,6 +37,13 @@
       }
     },
     {
+      "name": "TableInfoCache",
+      "config": {
+        "schema": "public",
+        "db_client": "default"
+      }
+    },
+    {
       "name": "MinioPlugin",
       "config": {
         "endpoint": "192.168.56.101:9000",

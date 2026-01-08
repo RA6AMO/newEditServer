@@ -157,6 +157,7 @@ drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestP
         bool committed = false;
         drogon::HttpResponsePtr finalResp;
         std::string opErrorMessage;
+        Json::Value successExtra = Json::objectValue;
 
         try
         {
@@ -252,10 +253,44 @@ drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestP
                 }
             }
 
+            // Готовим доп. данные ответа (только при успехе).
+            // Возвращаем то, что клиенту обычно нужно сразу: сопоставление attachment.id -> objectKey + метаданные.
+            if (!parsed.attachments.empty())
+            {
+                Json::Value filesArr = Json::arrayValue;
+                for (const auto &attachment : parsed.attachments)
+                {
+                    Json::Value f = Json::objectValue;
+                    f["id"] = attachment.id;
+                    if (!attachment.dbName.empty())
+                        f["dbName"] = attachment.dbName;
+                    if (!attachment.role.empty())
+                        f["role"] = attachment.role;
+                    if (!attachment.groupId.empty())
+                        f["groupId"] = attachment.groupId;
+                    if (!attachment.variant.empty())
+                        f["variant"] = attachment.variant;
+                    if (!attachment.filename.empty())
+                        f["filename"] = attachment.filename;
+                    if (!attachment.mimeType.empty())
+                        f["mimeType"] = attachment.mimeType;
+                    f["sizeBytes"] = static_cast<Json::Int64>(attachment.data.size());
+                    f["bucket"] = minioClientConfig.bucket;
+
+                    auto it = objectKeysMap.find(attachment.id);
+                    if (it != objectKeysMap.end())
+                    {
+                        f["objectKey"] = it->second;
+                    }
+                    filesArr.append(f);
+                }
+                successExtra["attachments"] = filesArr;
+            }
+
             // 13. COMMIT транзакции
             co_await transPtr->execSqlCoro("COMMIT");
             committed = true;
-            finalResp = makeSuccessResponse(rowId);
+            finalResp = makeSuccessResponse(rowId, successExtra);
         }
         catch (const BadRequestError &e)
         {
@@ -340,9 +375,16 @@ RowController::ParsedRequest RowController::parseMultipartRequest(drogon::HttpRe
     auto filesMap = parser.getFilesMap();
     
     // Получаем метаданные attachments из payload
-    if (!result.payload.isMember("attachments") || !result.payload["attachments"].isArray())
+    // attachments теперь ОПЦИОНАЛЕН:
+    // - если поля нет: считаем, что вложений нет
+    // - если поле есть: оно должно быть массивом
+    if (!result.payload.isMember("attachments"))
     {
-        throw std::runtime_error("Missing or invalid 'attachments' array in payload");
+        return result;
+    }
+    if (!result.payload["attachments"].isArray())
+    {
+        throw std::runtime_error("Invalid 'attachments' field in payload (must be array)");
     }
 
     const Json::Value &attachmentsArray = result.payload["attachments"];
@@ -368,6 +410,8 @@ RowController::ParsedRequest RowController::parseMultipartRequest(drogon::HttpRe
         attachment.id = attachmentId;
         attachment.dbName = attObj.get("dbName", "").asString();
         attachment.role = attObj.get("role", "").asString();
+        attachment.groupId = attObj.get("groupId", "").asString();
+        attachment.variant = attObj.get("variant", "").asString();
         attachment.filename = attObj.get("filename", "").asString();
         attachment.mimeType = attObj.get("mimeType", "").asString();
 
@@ -416,11 +460,18 @@ std::string RowController::generateObjectKey(const std::string &tablePrefix,
     return key.str();
 }
 
-drogon::HttpResponsePtr RowController::makeSuccessResponse(int64_t rowId)
+drogon::HttpResponsePtr RowController::makeSuccessResponse(int64_t rowId, const Json::Value &dataExtra)
 {
     Json::Value root;
     root["ok"] = true;
     root["data"]["id"] = static_cast<Json::Int64>(rowId);
+    if (!dataExtra.isNull() && dataExtra.isObject())
+    {
+        for (const auto &name : dataExtra.getMemberNames())
+        {
+            root["data"][name] = dataExtra[name];
+        }
+    }
     return makeJsonResponse(root, drogon::k200OK);
 }
 

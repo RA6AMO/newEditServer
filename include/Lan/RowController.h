@@ -53,7 +53,8 @@ private:
                                   const std::string &filename) const;
 
     /// Создать успешный JSON ответ
-    static drogon::HttpResponsePtr makeSuccessResponse(int64_t rowId);
+    static drogon::HttpResponsePtr makeSuccessResponse(int64_t rowId,
+                                                       const Json::Value &dataExtra = Json::nullValue);
 
     /// Создать JSON ответ с ошибкой
     static drogon::HttpResponsePtr makeErrorResponse(const std::string &code,

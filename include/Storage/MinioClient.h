@@ -53,6 +53,17 @@ public:
     /// @return true при успехе, false при ошибке
     bool deleteObject(const std::string &bucket, const std::string &objectKey);
 
+    /// Выгрузить (скачать) объект из MinIO
+    /// @param bucket имя bucket (если пустое, используется из config)
+    /// @param objectKey ключ объекта
+    /// @param outData буфер, в который будет записано содержимое объекта (перезаписывается)
+    /// @param outContentType опционально: MIME-тип из ответа (если доступен)
+    /// @return true при успехе, false при ошибке
+    bool getObject(const std::string &bucket,
+                   const std::string &objectKey,
+                   std::vector<uint8_t> &outData,
+                   std::string *outContentType = nullptr);
+
     /// Получить конфигурацию
     const Config &getConfig() const { return config_; }
 

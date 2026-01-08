@@ -10,7 +10,13 @@ struct AttachmentInfo
 {
     std::string id;         // например "file_0"
     std::string dbName;     // имя колонки в БД (например "image")
-    std::string role;       // "image" или "image_small"
+    // role: текущий контракт (legacy) — например "image" или "image_small"
+    // В будущем лучше перейти на groupId+variant, чтобы поддерживать 0..N изображений:
+    // - groupId: идентификатор "одной картинки" (чтобы связать big+small)
+    // - variant: "big"/"small" (или другие варианты)
+    std::string role;
+    std::string groupId;    // например "img1" (опционально)
+    std::string variant;    // например "big"/"small" (опционально)
     std::string filename;   // оригинальное имя файла
     std::string mimeType;   // MIME-тип
     std::vector<uint8_t> data; // данные файла
@@ -39,7 +45,7 @@ public:
     /// @param rowId ID созданной записи в основной таблице
     /// @param attachments список вложений с данными
     /// @param bucket имя bucket в MinIO
-    /// @param objectKeysMap карта role -> objectKey для каждого вложения
+    /// @param objectKeysMap карта attachment.id -> objectKey для каждого вложения
     /// @param meta метаданные (например, для ImageWithLink: name, link)
     /// @return SQL строка и вектор значений для подстановки
     virtual std::pair<std::string, std::vector<std::string>>

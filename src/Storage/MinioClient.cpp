@@ -108,3 +108,44 @@ bool MinioClient::deleteObject(const std::string &bucket, const std::string &obj
         return false;
     }
 }
+
+bool MinioClient::getObject(const std::string &bucket,
+                            const std::string &objectKey,
+                            std::vector<uint8_t> &outData,
+                            std::string *outContentType)
+{
+    try
+    {
+        std::string bucketName = bucket.empty() ? config_.bucket : bucket;
+        outData.clear();
+
+        minio::s3::GetObjectArgs args;
+        args.bucket = bucketName;
+        args.object = objectKey;
+        args.datafunc = [&outData](minio::http::DataFunctionArgs cbArgs) -> bool {
+            const std::string &chunk = cbArgs.datachunk;
+            outData.insert(outData.end(), chunk.begin(), chunk.end());
+            return true;
+        };
+
+        minio::s3::GetObjectResponse resp = pImpl_->client->GetObject(args);
+
+        if (!resp)
+        {
+            std::cerr << "MinIO getObject error: " << resp.Error().String() << std::endl;
+            return false;
+        }
+
+        if (outContentType)
+        {
+            *outContentType = resp.headers.GetFront("content-type");
+        }
+
+        return true;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "MinIO getObject exception: " << e.what() << std::endl;
+        return false;
+    }
+}

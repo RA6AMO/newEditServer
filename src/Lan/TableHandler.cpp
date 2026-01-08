@@ -153,24 +153,17 @@ void MillingToolCatalogHandler::buildColumnsAndValues(const Json::Value &fields,
             continue; // Эти типы не сохраняются
         }
 
-        columns.push_back(dbName);
+        // ВАЖНО (новый контракт):
+        // - если поля нет в fields => пропускаем колонку (пусть БД применит DEFAULT)
+        // - если поле есть и value == null => сохраняем SQL NULL
+        if (!fields.isMember(dbName))
+        {
+            continue;
+        }
 
-        if (fields.isMember(dbName))
-        {
-            const Json::Value &fieldValue = fields[dbName];
-            if (fieldValue.isNull())
-            {
-                values.push_back("NULL");
-            }
-            else
-            {
-                values.push_back(jsonValueToSql(fieldValue, type));
-            }
-        }
-        else
-        {
-            values.push_back("NULL");
-        }
+        columns.push_back(dbName);
+        const Json::Value &fieldValue = fields[dbName];
+        values.push_back(jsonValueToSql(fieldValue, type)); // jsonValueToSql(null, *) -> "NULL"
     }
 }
 
@@ -182,9 +175,11 @@ MillingToolCatalogHandler::buildInsertQuery(const Json::Value &fields, const Jso
 
     buildColumnsAndValues(fields, types, columns, values);
 
+    // Если клиент не передал ни одного сохраняемого поля, используем DEFAULT VALUES,
+    // чтобы сработали дефолты в БД (и всё равно получить id).
     if (columns.empty())
     {
-        throw std::runtime_error("No columns to insert");
+        return {"INSERT INTO public.milling_tool_catalog DEFAULT VALUES RETURNING id", {}};
     }
 
     std::ostringstream query;
@@ -330,15 +325,61 @@ MillingToolCatalogHandler::buildImagesUpdateQuery(int64_t rowId,
 
 std::string MillingToolCatalogHandler::validateFields(const Json::Value &fields, const Json::Value &types) const
 {
-    (void)types;
-    // Базовая валидация: проверка обязательных полей
-    // Для milling_tool_catalog обязательным является только name
+    // 1) Схемная проверка: для каждого присланного поля должен быть указан type.
+    // 2) Контракт: JSON null допустим для любого типа (означает "сохранить NULL"),
+    //    но бизнес-ограничения (required) всё равно проверяем отдельно.
+    for (const auto &dbName : fields.getMemberNames())
+    {
+        if (!types.isMember(dbName) || !types[dbName].isString())
+        {
+            return "Missing or invalid type for field '" + dbName + "'";
+        }
+
+        const std::string type = types[dbName].asString();
+        const Json::Value &v = fields[dbName];
+
+        // null принимаем всегда
+        if (v.isNull())
+        {
+            continue;
+        }
+
+        // Лёгкая тип-валидация для не-null значений (конвертация дальше в jsonValueToSql).
+        if (type == "Integer")
+        {
+            if (!(v.isInt() || v.isInt64() || v.isString()))
+                return "Invalid Integer value for field '" + dbName + "'";
+        }
+        else if (type == "Double")
+        {
+            if (!(v.isNumeric() || v.isString()))
+                return "Invalid Double value for field '" + dbName + "'";
+        }
+        else if (type == "Boolean")
+        {
+            if (!(v.isBool() || v.isString() || v.isInt() || v.isInt64()))
+                return "Invalid Boolean value for field '" + dbName + "'";
+        }
+        else if (type == "String" || type == "Link" || type == "File" || type == "FileWithLink" || type == "Folder" ||
+                 type == "Date")
+        {
+            if (!v.isString())
+                return "Invalid " + type + " value for field '" + dbName + "'";
+        }
+        else
+        {
+            // Неизвестные/кастомные типы: не валидируем здесь (но и не должны попадать в основную таблицу).
+            // Оставляем как есть.
+        }
+    }
+
+    // Бизнес-валидация: для milling_tool_catalog обязательным является только name
+    // (null/пустая строка не допускаются).
     if (!fields.isMember("name") || fields["name"].isNull() || !fields["name"].isString())
     {
         return "Field 'name' is required and must be a string";
     }
-
-    std::string name = fields["name"].asString();
+    const std::string name = fields["name"].asString();
     if (name.empty())
     {
         return "Field 'name' cannot be empty";
