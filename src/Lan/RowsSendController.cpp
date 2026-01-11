@@ -1,6 +1,9 @@
 #include "Lan/RowsSendController.h"
+#include "Lan/TableDataService.h"
+#include "Lan/ServiceErrors.h"
 
 #include <drogon/drogon.h>
+#include <drogon/orm/Exception.h>
 #include <json/json.h>
 
 #include <cctype>
@@ -9,6 +12,8 @@
 
 namespace
 {
+constexpr Json::ArrayIndex kMaxFilters = 100;
+
 // Единый формат ошибок в LAN-эндпоинтах (см. RowController/TableInfoSender):
 // { "ok": false, "error": { "code": "...", "message": "...", "details": {...?} } }
 Json::Value makeErrorObj(const std::string &code,
@@ -260,6 +265,14 @@ drogon::Task<drogon::HttpResponsePtr> RowsSendController::getTableData(drogon::H
         static const std::unordered_set<std::string> allowedKeys{
             "dbName", "type", "op", "nullMode", "v1", "v2"};
 
+        if (filters.size() > kMaxFilters)
+        {
+            Json::Value details;
+            details["maxFilters"] = static_cast<Json::UInt>(kMaxFilters);
+            details["filtersCount"] = static_cast<Json::UInt>(filters.size());
+            co_return badRequest("too many filters", details);
+        }
+
         for (Json::ArrayIndex i = 0; i < filters.size(); ++i)
         {
             const Json::Value &f = filters[i];
@@ -314,10 +327,7 @@ drogon::Task<drogon::HttpResponsePtr> RowsSendController::getTableData(drogon::H
             }
             const std::string op = f["op"].asString();
 
-            // nullable-фильтр (опционально): any / not_null / null
-            // - any      : обычная семантика (equals требует v1; range требует v1/v2)
-            // - not_null : добавляет "col IS NOT NULL" (значения v1/v2 опциональны)
-            // - null     : "col IS NULL" (значения v1/v2 опциональны)
+            // nullMode (опционально): any / not_null / null
             std::string nullMode = "any";
             if (f.isMember("nullMode"))
             {
@@ -374,24 +384,36 @@ drogon::Task<drogon::HttpResponsePtr> RowsSendController::getTableData(drogon::H
         }
     }
 
-    // 6) Service слой будет добавлен позже: пока заглушка.
-    // details — это "нормализованный контекст запроса", который пригодится на следующем слое:
-    // - nodeId: исходный nodeId клиента (1-based, как пришёл)
-    // - table: имя таблицы, полученное из kTableNames[nodeId-1]
-    // - offset/limit: нормализованные значения (clamp >=0)
-    // - filtersCount: количество валидных фильтров
-    //
-    // В реальном Service эти поля будут использоваться для:
-    // - выбора таблицы/схемы
-    // - whitelist колонок под конкретную таблицу
-    // - построения безопасного SQL (плейсхолдеры для значений, dbName только через whitelist)
-    // - пагинации offset/limit
-    Json::Value details;
-    details["nodeId"] = static_cast<Json::Int64>(nodeId);
-    details["table"] = tableName;
-    details["offset"] = offset;
-    details["limit"] = limit;
-    details["filtersCount"] = static_cast<Json::UInt>(filters.size());
-    co_return makeJsonResponse(makeErrorObj("not_implemented", "service not implemented yet", details),
-                              k501NotImplemented);
+    // 6) Service слой: выбираем данные из БД, считаем total, применяем фильтры/пагинацию.
+    try
+    {
+        TableDataService service;
+        auto page = co_await service.getPage(tableName, filters, offset, limit);
+
+        Json::Value root;
+        root["ok"] = true;
+        root["data"]["nodeId"] = static_cast<Json::Int64>(nodeId); // 1-based (как пришло)
+        root["data"]["table"] = tableName;
+        root["data"]["total"] = static_cast<Json::Int64>(page.total);
+        root["data"]["offset"] = page.offset;
+        root["data"]["limit"] = page.limit;
+        root["data"]["returned"] = static_cast<Json::UInt>(page.rows.size());
+        root["data"]["rows"] = std::move(page.rows);
+        root["data"]["sort"]["by"] = "id";
+        root["data"]["sort"]["dir"] = "asc";
+
+        co_return makeJsonResponse(root, k200OK);
+    }
+    catch (const BadRequestError &e)
+    {
+        co_return badRequest(e.what());
+    }
+    catch (const drogon::orm::DrogonDbException &)
+    {
+        co_return makeJsonResponse(makeErrorObj("internal", "db error"), k500InternalServerError);
+    }
+    catch (const std::exception &)
+    {
+        co_return makeJsonResponse(makeErrorObj("internal", "internal error"), k500InternalServerError);
+    }
 }

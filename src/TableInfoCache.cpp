@@ -46,8 +46,7 @@ TableInfoCache::getColumns(const std::string &tableName)
         "  data_type, "
         "  udt_name, "
         "  numeric_precision, "
-        "  numeric_scale, "
-        "  is_nullable "
+        "  numeric_scale "
         "FROM information_schema.columns "
         "WHERE table_schema = $1 "
         "  AND table_name   = $2 "
@@ -62,8 +61,6 @@ TableInfoCache::getColumns(const std::string &tableName)
         col["name"] = r["column_name"].as<std::string>();
         col["type"] = r["data_type"].as<std::string>();
         col["udt_name"] = r["udt_name"].as<std::string>();
-        // information_schema.columns.is_nullable: 'YES' | 'NO'
-        col["is_nullable"] = (r["is_nullable"].as<std::string>() == "YES");
 
         if (!r["numeric_precision"].isNull())
         {
