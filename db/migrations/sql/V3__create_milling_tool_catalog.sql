@@ -40,8 +40,9 @@ CREATE TABLE IF NOT EXISTS public.milling_tool_catalog (
     -- notes: комментарий/примечания
     notes TEXT NULL,
 
-    -- image_url: URL или путь к изображению (сами картинки лучше хранить в файловом хранилище/объектном хранилище)
-    image_exists BOOLEAN NULL DEFAULT FALSE,
+    -- image_exists: ID изображения (строки) в public.milling_tool_images, связанного со слотом 'image_exists'
+    -- NULL = изображения нет
+    image_exists BIGINT NULL,
 
     -- constraints: количества не могут быть отрицательными (NULL допустим для MVP)
     CONSTRAINT milling_tool_catalog_qty_on_stock_nonnegative_chk
@@ -60,11 +61,18 @@ CREATE INDEX IF NOT EXISTS idx_milling_tool_catalog_tool_type_id
 CREATE INDEX IF NOT EXISTS idx_milling_tool_catalog_brand_id
     ON public.milling_tool_catalog (brand_id);
 
--- Таблица изображений для инструментов (1:1 связь с milling_tool_catalog)
+-- Таблица изображений для инструментов (1:N связь с milling_tool_catalog)
 -- Хранит ссылки на MinIO для большого и маленького изображений, а также метаданные для ImageWithLink
+-- 1:N связь: один инструмент -> много изображений (по слотам image_*)
 CREATE TABLE IF NOT EXISTS public.milling_tool_images (
-    -- tool_id: ссылка на инструмент (PRIMARY KEY, т.к. связь 1:1)
-    tool_id BIGINT PRIMARY KEY REFERENCES public.milling_tool_catalog(id) ON DELETE CASCADE,
+    -- id: первичный ключ изображения
+    id BIGSERIAL PRIMARY KEY,
+
+    -- tool_id: ссылка на инструмент (1 инструмент -> N изображений)
+    tool_id BIGINT NOT NULL REFERENCES public.milling_tool_catalog(id) ON DELETE CASCADE,
+
+    -- slot: имя колонки в milling_tool_catalog, к которой относится изображение (например: 'image_exists')
+    slot TEXT NOT NULL,
 
     -- big: большое изображение (оригинал)
     big_bucket TEXT NULL,
@@ -86,3 +94,64 @@ CREATE TABLE IF NOT EXISTS public.milling_tool_images (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 1 изображение на 1 image_* ячейку (по слоту) для конкретного инструмента
+ALTER TABLE public.milling_tool_images
+  ADD CONSTRAINT milling_tool_images_tool_slot_uniq UNIQUE (tool_id, slot);
+
+-- FK: image_exists -> milling_tool_images.id
+ALTER TABLE public.milling_tool_catalog
+  ADD CONSTRAINT milling_tool_catalog_image_exists_fk
+  FOREIGN KEY (image_exists)
+  REFERENCES public.milling_tool_images(id)
+  ON DELETE SET NULL;
+
+-- Индексы для частых выборок
+CREATE INDEX IF NOT EXISTS idx_milling_tool_images_tool_id
+    ON public.milling_tool_images (tool_id);
+
+CREATE INDEX IF NOT EXISTS idx_milling_tool_images_tool_id_slot
+    ON public.milling_tool_images (tool_id, slot);
+
+-- Sync-триггер: изменения в milling_tool_images синхронизируют соответствующую image_* колонку в milling_tool_catalog
+CREATE OR REPLACE FUNCTION public.sync_milling_tool_images_to_catalog()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF (TG_OP = 'INSERT') THEN
+    EXECUTE format('UPDATE public.milling_tool_catalog SET %I = $1 WHERE id = $2', NEW.slot)
+      USING NEW.id, NEW.tool_id;
+    RETURN NEW;
+  END IF;
+
+  IF (TG_OP = 'UPDATE') THEN
+    -- если картинку переместили на другой tool/slot, сначала очистим старую ячейку (только если она указывала на OLD.id)
+    IF (NEW.tool_id <> OLD.tool_id) OR (NEW.slot <> OLD.slot) THEN
+      EXECUTE format('UPDATE public.milling_tool_catalog SET %I = NULL WHERE id = $1 AND %I = $2', OLD.slot, OLD.slot)
+        USING OLD.tool_id, OLD.id;
+    END IF;
+
+    -- затем выставим новую ячейку
+    EXECUTE format('UPDATE public.milling_tool_catalog SET %I = $1 WHERE id = $2', NEW.slot)
+      USING NEW.id, NEW.tool_id;
+
+    RETURN NEW;
+  END IF;
+
+  IF (TG_OP = 'DELETE') THEN
+    EXECUTE format('UPDATE public.milling_tool_catalog SET %I = NULL WHERE id = $1 AND %I = $2', OLD.slot, OLD.slot)
+      USING OLD.tool_id, OLD.id;
+    RETURN OLD;
+  END IF;
+
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_milling_tool_images_to_catalog ON public.milling_tool_images;
+
+CREATE TRIGGER trg_sync_milling_tool_images_to_catalog
+AFTER INSERT OR UPDATE OR DELETE ON public.milling_tool_images
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_milling_tool_images_to_catalog();
