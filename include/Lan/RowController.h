@@ -1,17 +1,14 @@
 #pragma once
 
 #include "AuthController.h"
-#include "TableHandler.h"
 
 #include <drogon/HttpController.h>
 #include <drogon/drogon.h>
 #include <json/json.h>
-#include <memory>
 #include <string>
-#include <vector>
 
-/// Контроллер для создания записей с файлами
-/// Обрабатывает POST /row/addRow с multipart/form-data
+/// Минимальный контроллер для создания записи.
+/// На текущем этапе содержит только базовые проверки (token, формат payload).
 class RowController : public drogon::HttpController<RowController>
 {
 public:
@@ -23,34 +20,15 @@ public:
     drogon::Task<drogon::HttpResponsePtr> addRow(drogon::HttpRequestPtr req);
 
 private:
-    /// Парсинг multipart запроса: извлечение JSON payload и файлов
+    /// Парсинг запроса: извлечение JSON payload.
     struct ParsedRequest
     {
-        Json::Value payload;                    // JSON из поля "payload"
-        std::vector<AttachmentInfo> attachments; // файлы, сопоставленные с метаданными
+        Json::Value payload; // JSON из поля "payload" (multipart) или из body (application/json)
     };
 
-    /// Распарсить multipart/form-data запрос
-    /// @return ParsedRequest или выбрасывает исключение при ошибке
+    /// Распарсить запрос и получить payload
+    /// @return ParsedRequest или выбрасывает исключение при ошибке формата/JSON
     ParsedRequest parseMultipartRequest(drogon::HttpRequestPtr req) const;
-
-    /// Создать обработчик для таблицы
-    /// @param tableName имя таблицы
-    /// @return указатель на обработчик или nullptr, если таблица не поддерживается
-    std::unique_ptr<ITableHandler> createHandler(const std::string &tableName) const;
-
-    /// Генерация object key для MinIO
-    /// @param tablePrefix префикс/имя таблицы (например: "milling_tool_catalog")
-    /// @param rowId ID записи
-    /// @param dbName имя колонки
-    /// @param role роль файла (image/image_small)
-    /// @param filename оригинальное имя файла
-    /// @return object key (например: "milling_tool_catalog/123/image_image_<uuid>.png")
-    std::string generateObjectKey(const std::string &tablePrefix,
-                                  int64_t rowId,
-                                  const std::string &dbName,
-                                  const std::string &role,
-                                  const std::string &filename) const;
 
     /// Создать успешный JSON ответ
     static drogon::HttpResponsePtr makeSuccessResponse(int64_t rowId,
