@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AuthController.h"
+#include "Lan/RowWriteTypes.h"
 
 #include <drogon/HttpController.h>
 #include <drogon/drogon.h>
@@ -17,16 +18,18 @@ public:
     ADD_METHOD_TO(RowController::addRow, "/row/addRow", drogon::Post);
     METHOD_LIST_END
 
+    /// Парсинг запроса: извлечение JSON payload.
+    /// Вынесено в public, чтобы бизнес-слои (SQL/MinIO) могли принимать "parsed" после валидации.
+    struct ParsedRequest
+    {
+        Json::Value payload; // JSON из поля "payload" (multipart) или из body (application/json)
+        std::vector<AttachmentInput> attachments;
+    };
+
     /// Основной метод обработки создания записи
     drogon::Task<drogon::HttpResponsePtr> addRow(drogon::HttpRequestPtr req);
 
 private:
-    /// Парсинг запроса: извлечение JSON payload.
-    struct ParsedRequest
-    {
-        Json::Value payload; // JSON из поля "payload" (multipart) или из body (application/json)
-    };
-
     /// Проверить, что payload соответствует ожидаемой таблице/схеме (whitelist + колонки из information_schema).
     /// Бросает исключение при проблемах.
     drogon::Task<void> customer_table_validation(const ParsedRequest &parsed) const;

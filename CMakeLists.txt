@@ -28,6 +28,7 @@ file(GLOB_RECURSE PROJECT_SOURCES CONFIGURE_DEPENDS
   "${CMAKE_SOURCE_DIR}/src/Table/*.cpp"
   "${CMAKE_SOURCE_DIR}/src/workers/*.cpp"
   "${CMAKE_SOURCE_DIR}/src/Lan/*.cpp"
+  "${CMAKE_SOURCE_DIR}/src/Lan/RowAdd/*.cpp"
 )
 
 # Добавляем заголовочные файлы для правильной работы MOC с Q_OBJECT
@@ -38,6 +39,7 @@ file(GLOB_RECURSE PROJECT_HEADERS CONFIGURE_DEPENDS
   "${CMAKE_SOURCE_DIR}/include/Table/*.h"
   "${CMAKE_SOURCE_DIR}/include/workers/*.h"
   "${CMAKE_SOURCE_DIR}/include/Lan/*.h"
+  "${CMAKE_SOURCE_DIR}/src/Lan/RowAdd/*.h"
 )
 
 add_executable(app ${PROJECT_SOURCES} ${PROJECT_HEADERS})
@@ -51,6 +53,7 @@ target_include_directories(app PRIVATE
     "${CMAKE_SOURCE_DIR}/include/Storage"
     "${CMAKE_SOURCE_DIR}/include/Lan"
     "${CMAKE_SOURCE_DIR}/include/Loger"
+    "${CMAKE_SOURCE_DIR}/src/Lan/RowAdd"
     ${THIRD_PARTY_INCLUDE_DIR}
 )
 

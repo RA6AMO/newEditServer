@@ -2,6 +2,7 @@
 #include "Loger/Logger.h"
 #include "TableInfoCache.h"
 #include "Lan/allTableList.h"
+#include "Lan/RowWriteService.h"
 
 #include <drogon/drogon.h>
 #include <drogon/MultiPart.h>
@@ -59,7 +60,7 @@ drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestP
             co_return makeJsonResponse(makeErrorObj(code, msg), httpCode);
         }
 
-        // 2) Базовая проверка формата: извлекаем JSON payload (multipart или json body)
+        // 2) Базовая проверка формата: извлекаем JSON payload и attachments
         ParsedRequest parsed;
         try
         {
@@ -67,7 +68,7 @@ drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestP
         }
         catch (const std::exception &e)
         {
-            co_return makeErrorResponse("bad_request", "Failed to parse multipart request: " + std::string(e.what()), k400BadRequest);
+            co_return makeErrorResponse("bad_request", "Failed to parse request payload: " + std::string(e.what()), k400BadRequest);
         }
 
         // 3) Минимальная проверка payload: он должен быть JSON-объектом
@@ -91,19 +92,17 @@ drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestP
             co_return makeErrorResponse("internal", "Internal validation error", k500InternalServerError);
         }
 
-
-
-        // 5) Принципиально: бизнес-логика пока не реализована (ты будешь менять её сам).
-        // Здесь оставляем только базовый каркас и единый формат ошибок.
-        Json::Value details;
-        if (parsed.payload.isMember("table") && parsed.payload["table"].isString())
+        // 5) Универсальная запись строки (DB + storage) через сервис
+        try
         {
-            details["table"] = parsed.payload["table"].asString();
-
+            RowWriteService writer;
+            const WriteResult result = co_await writer.write(parsed);
+            co_return makeSuccessResponse(result.rowId, result.extra);
         }
-        details["validated"] = true;
-        co_return makeJsonResponse(makeErrorObj("not_implemented", "Request validated, but row creation logic is not implemented yet", details),
-                                  k501NotImplemented);
+        catch (const RowWriteError &e)
+        {
+            co_return makeJsonResponse(makeErrorObj(e.code(), e.what(), e.details()), e.status());
+        }
 
     }
     catch (const std::exception &e)
@@ -210,20 +209,20 @@ RowController::ParsedRequest RowController::parseMultipartRequest(drogon::HttpRe
 {
     ParsedRequest result;
 
-    // 1) multipart/form-data (старый клиентский контракт)
+    // 1) Тело с files+payload
     if (req->contentType() == drogon::CT_MULTIPART_FORM_DATA)
     {
         drogon::MultiPartParser parser;
         if (parser.parse(req) != 0)
         {
-            throw std::runtime_error("Failed to parse multipart/form-data");
+            throw std::runtime_error("Failed to parse request body");
         }
 
         const auto &params = parser.getParameters();
         auto payloadIt = params.find("payload");
         if (payloadIt == params.end())
         {
-            throw std::runtime_error("Missing 'payload' field in multipart request");
+            throw std::runtime_error("Missing 'payload' field in request");
         }
 
         Json::Reader reader;
@@ -232,13 +231,86 @@ RowController::ParsedRequest RowController::parseMultipartRequest(drogon::HttpRe
             throw std::runtime_error("Invalid JSON in payload field");
         }
 
-        // Файлы могут присутствовать (клиент шлёт attachments).
-        // На этапе "только валидация таблицы" мы их не обрабатываем, но и не отклоняем запрос.
+        const auto filesMap = parser.getFilesMap();
+        if (result.payload.isObject() && result.payload.isMember("attachments"))
+        {
+            const Json::Value &attachments = result.payload["attachments"];
+            if (!attachments.isArray())
+            {
+                throw std::runtime_error("Invalid payload: attachments must be array");
+            }
+            if (attachments.empty())
+            {
+                return result;
+            }
+            if (filesMap.empty())
+            {
+                throw std::runtime_error("Invalid payload: attachments without file parts");
+            }
+
+            std::unordered_set<std::string> seen;
+            for (const auto &att : attachments)
+            {
+                if (!att.isObject())
+                {
+                    throw std::runtime_error("Invalid payload: attachment item must be object");
+                }
+                if (!att.isMember("id") || !att["id"].isString())
+                {
+                    throw std::runtime_error("Invalid payload: attachment.id is required");
+                }
+                if (!att.isMember("dbName") || !att["dbName"].isString())
+                {
+                    throw std::runtime_error("Invalid payload: attachment.dbName is required");
+                }
+                if (!att.isMember("role") || !att["role"].isString())
+                {
+                    throw std::runtime_error("Invalid payload: attachment.role is required");
+                }
+
+                const std::string id = att["id"].asString();
+                auto fileIt = filesMap.find(id);
+                if (fileIt == filesMap.end())
+                {
+                    throw std::runtime_error("Missing file part for attachment id: " + id);
+                }
+
+                AttachmentInput input;
+                input.id = id;
+                input.dbName = att["dbName"].asString();
+                input.role = att["role"].asString();
+                if (att.isMember("filename") && att["filename"].isString())
+                {
+                    input.filename = att["filename"].asString();
+                }
+                if (input.filename.empty())
+                {
+                    input.filename = fileIt->second.getFileName();
+                }
+                if (att.isMember("mimeType") && att["mimeType"].isString())
+                {
+                    input.mimeType = att["mimeType"].asString();
+                }
+
+                const auto content = fileIt->second.fileContent();
+                input.data.assign(content.begin(), content.end());
+                result.attachments.push_back(std::move(input));
+                seen.insert(id);
+            }
+
+            for (const auto &kv : filesMap)
+            {
+                if (seen.find(kv.first) == seen.end())
+                {
+                    throw std::runtime_error("Unexpected file part without payload attachment: " + kv.first);
+                }
+            }
+        }
         return result;
     }
 
 
-    // 2) application/json (полезно для будущих тестов и альтернативных клиентов)
+    // 2) application/json (без файлов)
     const std::string body(req->body());
     if (body.empty())
     {
@@ -248,6 +320,10 @@ RowController::ParsedRequest RowController::parseMultipartRequest(drogon::HttpRe
     if (!reader.parse(body, result.payload))
     {
         throw std::runtime_error("Invalid JSON in request body");
+    }
+    if (result.payload.isObject() && result.payload.isMember("attachments"))
+    {
+        throw std::runtime_error("Invalid payload: attachments require file parts");
     }
 
     return result;
