@@ -4,6 +4,7 @@
 
 #include <drogon/HttpController.h>
 #include <drogon/drogon.h>
+#include <drogon/utils/coroutine.h>
 #include <json/json.h>
 #include <string>
 
@@ -26,6 +27,10 @@ private:
         Json::Value payload; // JSON из поля "payload" (multipart) или из body (application/json)
     };
 
+    /// Проверить, что payload соответствует ожидаемой таблице/схеме (whitelist + колонки из information_schema).
+    /// Бросает исключение при проблемах.
+    drogon::Task<void> customer_table_validation(const ParsedRequest &parsed) const;
+
     /// Распарсить запрос и получить payload
     /// @return ParsedRequest или выбрасывает исключение при ошибке формата/JSON
     ParsedRequest parseMultipartRequest(drogon::HttpRequestPtr req) const;
@@ -39,4 +44,3 @@ private:
                                                     const std::string &message,
                                                     drogon::HttpStatusCode status);
 };
-
