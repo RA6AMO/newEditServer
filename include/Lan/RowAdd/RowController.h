@@ -30,10 +30,6 @@ public:
     drogon::Task<drogon::HttpResponsePtr> addRow(drogon::HttpRequestPtr req);
 
 private:
-    /// Проверить, что payload соответствует ожидаемой таблице/схеме (whitelist + колонки из information_schema).
-    /// Бросает исключение при проблемах.
-    drogon::Task<void> customer_table_validation(const ParsedRequest &parsed) const;
-
     /// Распарсить запрос и получить payload
     /// @return ParsedRequest или выбрасывает исключение при ошибке формата/JSON
     ParsedRequest parseMultipartRequest(drogon::HttpRequestPtr req) const;

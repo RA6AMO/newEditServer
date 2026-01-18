@@ -151,6 +151,7 @@ public:
         // - Здесь фиксируем допустимые роли для image ("image", "image_small").
         // - Здесь проверяем, что dbName начинается с "image_" и реально существует в таблице.
         // - Здесь проверяем типы ("Image"/"ImageWithLink"), чтобы не принимать чужие файлы.
+        // - Здесь проверяем структуру fields/types и разрешённые колонки.
         ValidationError err;
         const Json::Value &payload = parsed.payload;
         if (!payload.isObject() || !payload.isMember("table") || !payload["table"].isString())
@@ -167,6 +168,13 @@ public:
             co_return err;
         }
 
+        if (!payload.isMember("fields") || !payload["fields"].isObject())
+        {
+            err.code = "bad_request";
+            err.message = "Invalid payload: fields must be object";
+            co_return err;
+        }
+
         if (!payload.isMember("types") || !payload["types"].isObject())
         {
             err.code = "bad_request";
@@ -180,16 +188,70 @@ public:
             throw std::runtime_error("TableInfoCache is not initialized");
         }
         auto colsPtr = co_await cache->getColumns(tableName_);
-        if (!colsPtr || !colsPtr->isArray())
+        if (!colsPtr)
+        {
+            throw std::runtime_error("TableInfoCache returned null columns pointer");
+        }
+        if (!colsPtr->isArray())
         {
             throw std::runtime_error("TableInfoCache returned invalid columns");
         }
+        if (colsPtr->empty())
+        {
+            err.code = "bad_request";
+            err.message = "Invalid payload: unknown table or empty schema";
+            co_return err;
+        }
+
         std::unordered_map<std::string, bool> allowedColumns;
         for (const auto &c : *colsPtr)
         {
             if (c.isObject() && c.isMember("name") && c["name"].isString())
             {
                 allowedColumns.emplace(c["name"].asString(), true);
+            }
+        }
+        allowedColumns.emplace("id", true);
+
+        auto validateObjectKeys = [&](const char *fieldName)
+        {
+            const Json::Value &obj = payload[fieldName];
+            const auto names = obj.getMemberNames();
+            for (const auto &k : names)
+            {
+                if (allowedColumns.find(k) == allowedColumns.end())
+                {
+                    err.code = "bad_request";
+                    err.message = std::string("Invalid payload: unknown column in '") + fieldName + "': " + k;
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        if (!validateObjectKeys("fields"))
+        {
+            co_return err;
+        }
+        if (!validateObjectKeys("types"))
+        {
+            co_return err;
+        }
+
+        const Json::Value &fields = payload["fields"];
+        const Json::Value &types = payload["types"];
+        const auto fieldKeys = fields.getMemberNames();
+        for (const auto &k : fieldKeys)
+        {
+            if (k == "id")
+            {
+                continue;
+            }
+            if (!types.isMember(k))
+            {
+                err.code = "bad_request";
+                err.message = std::string("Invalid payload: types missing key for field: ") + k;
+                co_return err;
             }
         }
 
@@ -218,14 +280,14 @@ public:
                 co_return err;
             }
 
-            if (!payload["types"].isMember(att.dbName) || !payload["types"][att.dbName].isString())
+            if (!types.isMember(att.dbName) || !types[att.dbName].isString())
             {
                 err.code = "bad_request";
                 err.message = "Invalid payload: types missing dbName for attachment";
                 err.details["dbName"] = att.dbName;
                 co_return err;
             }
-            const std::string typeStr = payload["types"][att.dbName].asString();
+            const std::string typeStr = types[att.dbName].asString();
             if (typeStr != "Image" && typeStr != "ImageWithLink")
             {
                 err.code = "bad_request";

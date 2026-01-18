@@ -1,0 +1,96 @@
+# Структура RowAdd
+
+## 1) Основные сущности
+
+### RowController
+- Роль: принимает HTTP запрос, делает общую валидацию и делегирует запись в RowWriteService.
+- Не содержит бизнес-логики таблиц и файлов.
+- На вход получает payload + attachments (JSON + файлы).
+
+### RowWriteService
+- Оркестратор: транзакция БД + загрузка в MinIO + выполнение плана.
+- Алгоритм:
+  1) Находит planner по payload.table.
+  2) Валидирует payload + attachments через planner.
+  3) Открывает транзакцию и вставляет базовую строку (insertBaseRow).
+  4) Генерирует objectKey для каждого attachment.
+  5) Строит RowWritePlan через planner.
+  6) Выполняет план: preUploadDbOps -> uploads -> postUploadDbOps.
+  7) При ошибке: rollback + удалить загруженные объекты.
+- Возвращает rowId и map attachmentId -> objectKey.
+
+### RowWritePlannerRegistry
+- Реестр планировщиков по имени таблицы.
+- Если таблица не зарегистрирована, RowWriteService вернет ошибку.
+
+### ITableRowWritePlanner
+- Интерфейс, который реализует бизнес-логику конкретной таблицы.
+- Методы:
+  - validate(parsed): проверка payload + attachments.
+  - insertBaseRow(parsed, trans): INSERT в таблицу, вернуть id.
+  - buildWritePlan(rowId, parsed, objectKeys, minioConfig): построить план.
+
+### RowWritePlan
+- План исполнения, который не знает "почему", только "что сделать".
+- Состоит из:
+  - preUploadDbOps: SQL до загрузки в MinIO.
+  - uploads: список объектов для MinIO (attachmentId -> objectKey).
+  - postUploadDbOps: SQL после загрузки.
+  - successExtra: дополнительные поля ответа.
+
+### ImageSlotsPlanner (конкретная реализация planner)
+- Реализует схему "images by slot" (milling_tool_images).
+- Использует slot = attachment.dbName (image_*).
+- Делает UPSERT по (tool_id, slot), обновляя big/small поля.
+- Не трогает milling_tool_catalog.image_* вручную (это делает триггер).
+
+
+## 2) Поток выполнения (упрощенно)
+
+RowController
+  -> RowWriteService
+     -> Registry.getPlanner(table)
+     -> planner.validate()
+     -> INSERT base row (planner.insertBaseRow)
+     -> objectKeys (id->key)
+     -> planner.buildWritePlan()
+     -> execute plan (DB ops + uploads)
+     -> commit
+
+Если ошибка:
+  -> rollback
+  -> delete already uploaded objects
+  -> error response
+
+
+## 3) Как расширять
+
+### Вариант A: новая таблица с такой же схемой images-by-slot
+1) Создать новый ImageSlotsPlanner с параметрами:
+   - tableName: имя таблицы (например cutting_tool_catalog)
+   - imagesTableName: имя таблицы изображений
+   - fkColumn: колонка связи (обычно tool_id)
+   - schema: например public
+2) Зарегистрировать planner в createDefaultRowWritePlannerRegistry().
+3) Больше ничего менять не нужно.
+
+### Вариант B: новый тип файлов (не image)
+1) Создать новый planner (например FileSlotsPlanner) и реализовать ITableRowWritePlanner.
+2) В validate():
+   - проверить types[dbName] для нужного типа (например "File", "Pdf").
+   - проверить role/формат attachments.
+3) В buildWritePlan():
+   - добавить UploadOp для каждого attachment.
+   - добавить DbOp для записи ссылок в свою таблицу.
+4) Зарегистрировать planner в registry.
+5) RowController и RowWriteService не меняются.
+
+### Вариант C: расширить ImageSlotsPlanner
+1) Добавить новые роли (например "image_preview") в validate().
+2) В appendImageSlotPlan() обработать новую роль и обновить нужные поля.
+
+
+## 4) Примечания по безопасности
+- dbName/slot используется как идентификатор SQL: нужен whitelist (image_* + существование колонки).
+- Любые значения в SQL должны быть параметризованы (не string concat).
+- Не обновлять catalog.image_* вручную — это делает триггер.

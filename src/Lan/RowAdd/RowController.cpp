@@ -1,7 +1,5 @@
 #include "Lan/RowController.h"
 #include "Loger/Logger.h"
-#include "TableInfoCache.h"
-#include "Lan/allTableList.h"
 #include "Lan/RowWriteService.h"
 
 #include <drogon/drogon.h>
@@ -9,7 +7,6 @@
 #include <json/reader.h>
 #include <json/writer.h>
 #include <sstream>
-#include <algorithm>
 #include <unordered_set>
 
 namespace
@@ -77,22 +74,7 @@ drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestP
             co_return makeErrorResponse("bad_request", "Invalid payload: expected JSON object", k400BadRequest);
         }
 
-        // 4) Валидация таблицы/колонок (сравниваем payload с information_schema через TableInfoCache)
-        try
-        {
-            co_await customer_table_validation(parsed);
-        }
-        catch (const BadRequestError &e)
-        {
-            co_return makeErrorResponse("bad_request", e.what(), k400BadRequest);
-        }
-        catch (const std::exception &e)
-        {
-            LOG_ERROR(std::string("customer_table_validation error: ") + e.what());
-            co_return makeErrorResponse("internal", "Internal validation error", k500InternalServerError);
-        }
-
-        // 5) Универсальная запись строки (DB + storage) через сервис
+        // 4) Универсальная запись строки (DB + storage) через сервис
         try
         {
             RowWriteService writer;
@@ -110,99 +92,6 @@ drogon::Task<drogon::HttpResponsePtr> RowController::addRow(drogon::HttpRequestP
         LOG_ERROR(std::string("addRow fatal error: ") + e.what());
         co_return makeErrorResponse("internal", "Internal error: " + std::string(e.what()), k500InternalServerError);
     }
-}
-
-drogon::Task<void> RowController::customer_table_validation(const RowController::ParsedRequest &parsed) const
-{
-    if (!parsed.payload.isObject())
-    {
-        throw BadRequestError("Invalid payload: expected JSON object");
-    }
-
-    const Json::Value &p = parsed.payload;
-    if (!p.isMember("table") || !p["table"].isString())
-    {
-        throw BadRequestError("Invalid payload: missing string field 'table'");
-    }
-
-    const std::string tableName = p["table"].asString();
-    if (tableName.empty())
-    {
-        throw BadRequestError("Invalid payload: empty 'table'");
-    }
-
-    // 1) Разрешаем только таблицы из whitelist (защита от подстановки произвольного имени)
-    if (std::find(kTableNames.begin(), kTableNames.end(), tableName) == kTableNames.end())
-    {
-        throw BadRequestError("Invalid payload: table is not allowed");
-    }
-
-    // 2) Берём список колонок из кеша (information_schema.columns)
-    auto cache = drogon::app().getPlugin<TableInfoCache>();
-    if (!cache)
-    {
-        throw std::runtime_error("TableInfoCache is not initialized");
-    }
-
-    auto colsPtr = co_await cache->getColumns(tableName);
-    if (!colsPtr)
-    {
-        throw std::runtime_error("TableInfoCache returned null columns pointer");
-    }
-    const Json::Value &cols = *colsPtr;
-    if (!cols.isArray() || cols.empty())
-    {
-        throw BadRequestError("Invalid payload: unknown table or empty schema");
-    }
-
-    std::unordered_set<std::string> allowedColumns;
-    allowedColumns.reserve(cols.size() + 1);
-    for (const auto &c : cols)
-    {
-        if (c.isObject() && c.isMember("name") && c["name"].isString())
-        {
-            allowedColumns.insert(c["name"].asString());
-        }
-    }
-    allowedColumns.insert("id");
-
-    auto validateObjectKeys = [&](const char *fieldName)
-    {
-        if (!p.isMember(fieldName))
-        {
-            throw BadRequestError(std::string("Invalid payload: missing '") + fieldName + "'");
-        }
-        if (!p[fieldName].isObject())
-        {
-            throw BadRequestError(std::string("Invalid payload: '") + fieldName + "' must be an object");
-        }
-        const auto names = p[fieldName].getMemberNames();
-        for (const auto &k : names)
-        {
-            if (allowedColumns.find(k) == allowedColumns.end())
-            {
-                throw BadRequestError(std::string("Invalid payload: unknown column in '") + fieldName + "': " + k);
-            }
-        }
-    };
-
-    // 3) Проверяем, что keys в fields/types — только известные колонки
-    validateObjectKeys("fields");
-    validateObjectKeys("types");
-
-    // 4) Консистентность: каждый ключ из fields (кроме id) должен иметь тип в types
-    const auto fieldKeys = p["fields"].getMemberNames();
-    for (const auto &k : fieldKeys)
-    {
-        if (k == "id")
-            continue;
-        if (!p["types"].isMember(k))
-        {
-            throw BadRequestError(std::string("Invalid payload: types missing key for field: ") + k);
-        }
-    }
-
-    co_return;
 }
 
 RowController::ParsedRequest RowController::parseMultipartRequest(drogon::HttpRequestPtr req) const
