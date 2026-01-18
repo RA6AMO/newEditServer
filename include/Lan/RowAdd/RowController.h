@@ -1,7 +1,7 @@
 #pragma once
 
 #include "AuthController.h"
-#include "Lan/RowWriteTypes.h"
+#include "RowWriteTypes.h"
 
 #include <drogon/HttpController.h>
 #include <drogon/drogon.h>

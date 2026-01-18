@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Lan/RowController.h"
-#include "Lan/RowWriteTypes.h"
+#include "Lan/RowAdd/RowController.h"
+#include "Lan/RowAdd/RowWriteTypes.h"
 #include "Storage/MinioClient.h"
 
 #include <drogon/utils/coroutine.h>

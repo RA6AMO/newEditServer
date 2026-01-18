@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS public.milling_tool_catalog (
     id BIGSERIAL PRIMARY KEY,
 
     -- name: человекочитаемое наименование инструмента (например: "Фреза концевая сферическая D12 R6")
-    name TEXT NOT NULL,
+    name TEXT NULL,
 
     -- reference ids: ссылки на локальные справочники (FOREIGN KEY можно добавить позже)
     -- tool_type_id: тип фрезы (концевая/сферическая/черновая/фасочная и т.п.)
