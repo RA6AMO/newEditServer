@@ -123,6 +123,10 @@ SqlCommand buildInsertCommand(const Json::Value &payload,
     cmd.sql = "INSERT INTO " + quoteIdent(schema) + "." + quoteIdent(table) + " (" + colsSql +
               ") VALUES (" + valsSql + ") RETURNING id";
     cmd.binders = std::move(binders);
+
+
+
+    
     return cmd;
 }
 
