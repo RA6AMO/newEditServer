@@ -122,6 +122,7 @@ drogon::Task<WriteResult> RowWriteService::write(const RowController::ParsedRequ
     // Вставка базовой строки — делегируется planner-у.
     const int64_t rowId = co_await planner->insertBaseRow(parsed, trans);
 
+
     std::unordered_map<std::string, std::string> objectKeys;
     objectKeys.reserve(parsed.attachments.size());
     for (const auto &att : parsed.attachments)

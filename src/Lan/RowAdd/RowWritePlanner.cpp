@@ -46,17 +46,13 @@ void bindJsonValue(drogon::orm::internal::SqlBinder &binder, const Json::Value &
     {
         binder << value.asBool();
     }
-    else if (value.isInt() || value.isInt64())
+    else if (value.isInt() || value.isInt64() || value.isUInt() || value.isUInt64() || value.isDouble())
     {
-        binder << static_cast<int64_t>(value.asInt64());
-    }
-    else if (value.isUInt() || value.isUInt64())
-    {
-        binder << static_cast<uint64_t>(value.asUInt64());
-    }
-    else if (value.isDouble())
-    {
-        binder << value.asDouble();
+        // Передаем числа как строки. PostgreSQL сам сконвертирует их в нужный тип 
+        // (int4, int8, numeric и т.д.) на стороне сервера. Это позволяет избежать 
+        // ошибок бинарного формата ("incorrect binary data format"), которые возникают 
+        // при несовпадении размера типа в C++ и в БД (например, int64_t vs INTEGER/int4).
+        binder << value.asString();
     }
     else if (value.isString())
     {
