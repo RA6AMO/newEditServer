@@ -71,7 +71,16 @@ drogon::Task<void> RowWriteService::executePlan(
                                               upload.mimeType);
         if (!ok)
         {
-            throw RowWriteError("storage_error", "Failed to upload object to storage", drogon::k500InternalServerError);
+            Json::Value details(Json::objectValue);
+            details["bucket"] = upload.bucket;
+            details["objectKey"] = upload.objectKey;
+            details["mimeType"] = upload.mimeType;
+            details["sizeBytes"] = static_cast<Json::UInt64>(att->data.size());
+            LOG_ERROR << "MinIO upload failed: bucket=" << upload.bucket
+                      << " key=" << upload.objectKey
+                      << " size=" << att->data.size()
+                      << " (see ./logs/error.log for details)";
+            throw RowWriteError("storage_error", "Failed to upload object to storage", drogon::k500InternalServerError, details);
         }
         uploadedObjects.push_back(UploadedObject{upload.bucket, upload.objectKey});
     }

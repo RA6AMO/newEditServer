@@ -1,5 +1,7 @@
 #include "Storage/MinioClient.h"
 
+#include "Loger/Logger.h"
+
 #include <miniocpp/client.h>
 #include <sstream>
 #include <iostream>
@@ -60,7 +62,19 @@ bool MinioClient::putObject(const std::string &bucket,
 
         if (!resp)
         {
-            std::cerr << "MinIO putObject error: " << resp.Error().String() << std::endl;
+            std::ostringstream oss;
+            oss << "MinIO putObject failed"
+                << " endpoint=" << config_.endpoint
+                << " useSSL=" << (config_.useSSL ? "true" : "false")
+                << " bucket=" << bucketName
+                << " key=" << objectKey
+                << " sizeBytes=" << data.size();
+            if (!contentType.empty())
+            {
+                oss << " contentType=" << contentType;
+            }
+            oss << " error=" << resp.Error().String();
+            Logger::instance().error(oss.str());
             return false;
         }
 
@@ -68,7 +82,15 @@ bool MinioClient::putObject(const std::string &bucket,
     }
     catch (const std::exception &e)
     {
-        std::cerr << "MinIO putObject exception: " << e.what() << std::endl;
+        std::ostringstream oss;
+        oss << "MinIO putObject exception"
+            << " endpoint=" << config_.endpoint
+            << " useSSL=" << (config_.useSSL ? "true" : "false")
+            << " bucket=" << (bucket.empty() ? config_.bucket : bucket)
+            << " key=" << objectKey
+            << " sizeBytes=" << data.size()
+            << " what=" << e.what();
+        Logger::instance().error(oss.str());
         return false;
     }
 }
@@ -96,7 +118,14 @@ bool MinioClient::deleteObject(const std::string &bucket, const std::string &obj
 
         if (!resp)
         {
-            std::cerr << "MinIO deleteObject error: " << resp.Error().String() << std::endl;
+            std::ostringstream oss;
+            oss << "MinIO deleteObject failed"
+                << " endpoint=" << config_.endpoint
+                << " useSSL=" << (config_.useSSL ? "true" : "false")
+                << " bucket=" << bucketName
+                << " key=" << objectKey
+                << " error=" << resp.Error().String();
+            Logger::instance().error(oss.str());
             return false;
         }
 
@@ -104,7 +133,14 @@ bool MinioClient::deleteObject(const std::string &bucket, const std::string &obj
     }
     catch (const std::exception &e)
     {
-        std::cerr << "MinIO deleteObject exception: " << e.what() << std::endl;
+        std::ostringstream oss;
+        oss << "MinIO deleteObject exception"
+            << " endpoint=" << config_.endpoint
+            << " useSSL=" << (config_.useSSL ? "true" : "false")
+            << " bucket=" << (bucket.empty() ? config_.bucket : bucket)
+            << " key=" << objectKey
+            << " what=" << e.what();
+        Logger::instance().error(oss.str());
         return false;
     }
 }
@@ -132,7 +168,14 @@ bool MinioClient::getObject(const std::string &bucket,
 
         if (!resp)
         {
-            std::cerr << "MinIO getObject error: " << resp.Error().String() << std::endl;
+            std::ostringstream oss;
+            oss << "MinIO getObject failed"
+                << " endpoint=" << config_.endpoint
+                << " useSSL=" << (config_.useSSL ? "true" : "false")
+                << " bucket=" << bucketName
+                << " key=" << objectKey
+                << " error=" << resp.Error().String();
+            Logger::instance().error(oss.str());
             return false;
         }
 
@@ -145,7 +188,14 @@ bool MinioClient::getObject(const std::string &bucket,
     }
     catch (const std::exception &e)
     {
-        std::cerr << "MinIO getObject exception: " << e.what() << std::endl;
+        std::ostringstream oss;
+        oss << "MinIO getObject exception"
+            << " endpoint=" << config_.endpoint
+            << " useSSL=" << (config_.useSSL ? "true" : "false")
+            << " bucket=" << (bucket.empty() ? config_.bucket : bucket)
+            << " key=" << objectKey
+            << " what=" << e.what();
+        Logger::instance().error(oss.str());
         return false;
     }
 }

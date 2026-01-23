@@ -4,6 +4,7 @@
 #include <vector>
 #include <memory>
 #include <optional>
+#include <mutex>
 
 /// Обёртка над MinIO C++ SDK для загрузки и удаления объектов.
 /// Использует minio-cpp SDK (https://github.com/minio/minio-cpp)
@@ -67,10 +68,20 @@ public:
     /// Получить конфигурацию
     const Config &getConfig() const { return config_; }
 
+    /// Последняя ошибка, полученная от SDK (для диагностики).
+    /// Возвращает пустую строку, если последняя операция прошла успешно
+    /// или если ошибка не была установлена.
+    std::string lastError() const;
+
 private:
     Config config_;
     // PIMPL: скрываем детали реализации minio-cpp
     class Impl;
     std::unique_ptr<Impl> pImpl_;
+
+    void setLastError(std::string err);
+    void clearLastError();
+    mutable std::mutex lastErrorMutex_;
+    std::string lastError_;
 };
 
