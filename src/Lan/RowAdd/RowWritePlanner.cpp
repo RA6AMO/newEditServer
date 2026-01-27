@@ -1,4 +1,5 @@
 #include "Lan/RowAdd/RowWritePlanner.h"
+#include "Lan/allTableList.h"
 #include "TableInfoCache.h"
 
 #include <drogon/drogon.h>
@@ -581,12 +582,12 @@ std::shared_ptr<RowWritePlannerRegistry> createDefaultRowWritePlannerRegistry()
     // - Если появляется новый тип вложений, создайте свой planner (например FileSlotsPlanner)
     //   и зарегистрируйте его здесь.
     auto registry = std::make_shared<RowWritePlannerRegistry>();
-    registry->registerPlanner("milling_tool_catalog",
+    registry->registerPlanner(kTableNames[0],
                               std::make_shared<ImageSlotsPlanner>(
-                                  "milling_tool_catalog",
-                                  "milling_tool_images",
-                                  "tool_id",
-                                  "public"));
+                                    kTableNames[0],
+                                    kTableMinioBySlot.at(kTableNames[0]),
+                                    "tool_id",
+                                    "public"));
     return registry;
 }
 

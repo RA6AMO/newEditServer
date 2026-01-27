@@ -13,6 +13,24 @@ public:
     std::unique_ptr<minio::creds::StaticProvider> credProvider;
 };
 
+void MinioClient::setLastError(std::string err)
+{
+    std::lock_guard<std::mutex> lk(lastErrorMutex_);
+    lastError_ = std::move(err);
+}
+
+void MinioClient::clearLastError()
+{
+    std::lock_guard<std::mutex> lk(lastErrorMutex_);
+    lastError_.clear();
+}
+
+std::string MinioClient::lastError() const
+{
+    std::lock_guard<std::mutex> lk(lastErrorMutex_);
+    return lastError_;
+}
+
 MinioClient::MinioClient(const Config &config)
     : config_(config), pImpl_(std::make_unique<Impl>())
 {
@@ -41,6 +59,7 @@ bool MinioClient::putObject(const std::string &bucket,
 {
     try
     {
+        clearLastError();
         std::string bucketName = bucket.empty() ? config_.bucket : bucket;
 
         // Создаём поток из данных
@@ -75,9 +94,11 @@ bool MinioClient::putObject(const std::string &bucket,
             }
             oss << " error=" << resp.Error().String();
             Logger::instance().error(oss.str());
+            setLastError(resp.Error().String());
             return false;
         }
 
+        clearLastError();
         return true;
     }
     catch (const std::exception &e)
@@ -91,6 +112,7 @@ bool MinioClient::putObject(const std::string &bucket,
             << " sizeBytes=" << data.size()
             << " what=" << e.what();
         Logger::instance().error(oss.str());
+        setLastError(e.what());
         return false;
     }
 }
@@ -108,6 +130,7 @@ bool MinioClient::deleteObject(const std::string &bucket, const std::string &obj
 {
     try
     {
+        clearLastError();
         std::string bucketName = bucket.empty() ? config_.bucket : bucket;
 
         minio::s3::RemoveObjectArgs args;
@@ -126,9 +149,11 @@ bool MinioClient::deleteObject(const std::string &bucket, const std::string &obj
                 << " key=" << objectKey
                 << " error=" << resp.Error().String();
             Logger::instance().error(oss.str());
+            setLastError(resp.Error().String());
             return false;
         }
 
+        clearLastError();
         return true;
     }
     catch (const std::exception &e)
@@ -141,6 +166,7 @@ bool MinioClient::deleteObject(const std::string &bucket, const std::string &obj
             << " key=" << objectKey
             << " what=" << e.what();
         Logger::instance().error(oss.str());
+        setLastError(e.what());
         return false;
     }
 }
@@ -152,6 +178,7 @@ bool MinioClient::getObject(const std::string &bucket,
 {
     try
     {
+        clearLastError();
         std::string bucketName = bucket.empty() ? config_.bucket : bucket;
         outData.clear();
 
@@ -176,6 +203,7 @@ bool MinioClient::getObject(const std::string &bucket,
                 << " key=" << objectKey
                 << " error=" << resp.Error().String();
             Logger::instance().error(oss.str());
+            setLastError(resp.Error().String());
             return false;
         }
 
@@ -184,6 +212,7 @@ bool MinioClient::getObject(const std::string &bucket,
             *outContentType = resp.headers.GetFront("content-type");
         }
 
+        clearLastError();
         return true;
     }
     catch (const std::exception &e)
@@ -196,6 +225,7 @@ bool MinioClient::getObject(const std::string &bucket,
             << " key=" << objectKey
             << " what=" << e.what();
         Logger::instance().error(oss.str());
+        setLastError(e.what());
         return false;
     }
 }
