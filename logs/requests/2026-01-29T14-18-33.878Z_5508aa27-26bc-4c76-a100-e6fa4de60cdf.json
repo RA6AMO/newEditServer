@@ -1,0 +1,22 @@
+{
+  "body" : 
+  {
+    "lengthBytes" : 0,
+    "text" : ""
+  },
+  "contentType" : 0,
+  "headers" : 
+  {
+    "accept-encoding" : "gzip, deflate",
+    "accept-language" : "ru-RU,en,*",
+    "connection" : "Keep-Alive",
+    "host" : "192.168.56.101:8080",
+    "token" : "GIa0qcVnvABfiEDc0FGPDLpmhBPrzX5k",
+    "user-agent" : "Mozilla/5.0"
+  },
+  "method" : "GET",
+  "path" : "/table/data/get",
+  "peerIp" : "192.168.56.1",
+  "query" : "nodeId=1&offset=0&limit=20",
+  "timestamp" : "2026-01-29T14:18:33.878Z"
+}

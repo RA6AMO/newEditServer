@@ -1,6 +1,7 @@
 #include "Lan/RowsSendController.h"
 #include "Lan/TableDataService.h"
 #include "Lan/ServiceErrors.h"
+#include "Helpers/RequestJsonLogger.h"
 
 #include <drogon/drogon.h>
 #include <drogon/orm/Exception.h>
@@ -154,6 +155,9 @@ drogon::HttpResponsePtr badRequest(const std::string &message, const Json::Value
 drogon::Task<drogon::HttpResponsePtr> RowsSendController::getTableData(drogon::HttpRequestPtr req)
 {
     using namespace drogon;
+
+    // Best-effort: логируем сырой запрос в JSON-файл.
+    RequestJsonLogger{}.log(req);
 
     // 1) token обязателен (авторизация)
     const std::string token = req->getHeader("token");
