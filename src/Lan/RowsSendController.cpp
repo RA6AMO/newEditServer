@@ -157,7 +157,7 @@ drogon::Task<drogon::HttpResponsePtr> RowsSendController::getTableData(drogon::H
     using namespace drogon;
 
     // Best-effort: логируем сырой запрос в JSON-файл.
-    RequestJsonLogger{}.log(req);
+    //RequestJsonLogger{}.log(req);
 
     // 1) token обязателен (авторизация)
     const std::string token = req->getHeader("token");
