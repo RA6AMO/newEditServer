@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -41,18 +42,11 @@
 
 namespace
 {
-Json::Value makeErrorObj(const std::string &code,
-                        const std::string &message,
-                        const Json::Value &details = Json::nullValue)
+Json::Value makeErrorMessage(const std::string &message)
 {
     Json::Value root;
     root["ok"] = false;
-    root["error"]["code"] = code;
     root["error"]["message"] = message;
-    if (!details.isNull())
-    {
-        root["error"]["details"] = details;
-    }
     return root;
 }
 
@@ -62,14 +56,6 @@ drogon::HttpResponsePtr makeJsonResponse(const Json::Value &body, drogon::HttpSt
     resp->setStatusCode(status);
     return resp;
 }
-
-struct ErrorItem
-{
-    int64_t rowId{};
-    std::string dbName;
-    std::string code;
-    std::string message;
-};
 
 bool isSafeIdentifier(const std::string &s)
 {
@@ -110,18 +96,99 @@ std::string basenameFromKey(const std::string &objectKey)
     return name;
 }
 
-std::string buildInList(size_t n, size_t firstIndex = 1)
+std::string sanitizeHeaderValue(std::string value)
 {
-    // "$1,$2,..."
-    std::string out;
-    out.reserve(n * 3);
-    for (size_t i = 0; i < n; ++i)
+    value.erase(std::remove(value.begin(), value.end(), '\r'), value.end());
+    value.erase(std::remove(value.begin(), value.end(), '\n'), value.end());
+    return value;
+}
+
+std::optional<uint64_t> parseRowId(const Json::Value &val)
+{
+    if (val.isUInt64())
     {
-        if (i)
-            out += ",";
-        out += "$" + std::to_string(firstIndex + i);
+        return val.asUInt64();
     }
-    return out;
+    if (val.isInt64())
+    {
+        const auto v = val.asInt64();
+        if (v > 0)
+        {
+            return static_cast<uint64_t>(v);
+        }
+        return std::nullopt;
+    }
+    if (val.isInt())
+    {
+        const auto v = val.asInt();
+        if (v > 0)
+        {
+            return static_cast<uint64_t>(v);
+        }
+        return std::nullopt;
+    }
+    if (val.isString())
+    {
+        const std::string s = val.asString();
+        if (s.empty())
+        {
+            return std::nullopt;
+        }
+        for (const unsigned char c : s)
+        {
+            if (c < '0' || c > '9')
+            {
+                return std::nullopt;
+            }
+        }
+        try
+        {
+            const unsigned long long v = std::stoull(s);
+            if (v == 0ULL)
+            {
+                return std::nullopt;
+            }
+            return static_cast<uint64_t>(v);
+        }
+        catch (const std::exception &)
+        {
+            return std::nullopt;
+        }
+    }
+    return std::nullopt;
+}
+
+std::string inferImageMime(const std::string &objectKey)
+{
+    const auto dot = objectKey.find_last_of('.');
+    if (dot == std::string::npos || dot + 1 >= objectKey.size())
+    {
+        return "image/*";
+    }
+    std::string ext = objectKey.substr(dot + 1);
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (ext == "jpg" || ext == "jpeg")
+        return "image/jpeg";
+    if (ext == "png")
+        return "image/png";
+    if (ext == "webp")
+        return "image/webp";
+    if (ext == "gif")
+        return "image/gif";
+    if (ext == "bmp")
+        return "image/bmp";
+    if (ext == "tif" || ext == "tiff")
+        return "image/tiff";
+    return "image/*";
+}
+
+std::string normalizeImageMime(const std::string &mime, const std::string &objectKey)
+{
+    if (!mime.empty())
+    {
+        return mime;
+    }
+    return inferImageMime(objectKey);
 }
 
 // Сформировать одну бинарную часть multipart/mixed.
@@ -131,6 +198,7 @@ void appendBinaryPart(std::string &body,
                       const std::string &dbName,
                       const std::string &mime,
                       const std::string &filename,
+                      const std::string &reason,
                       const std::string &linkName,
                       const std::string &linkUrl,
                       const std::vector<uint8_t> &bytes)
@@ -154,6 +222,13 @@ void appendBinaryPart(std::string &body,
     body += "X-Db-Name: ";
     body += dbName;
     body += "\r\n";
+
+    if (!reason.empty())
+    {
+        body += "X-Reason: ";
+        body += reason;
+        body += "\r\n";
+    }
 
     if (!linkName.empty())
     {
@@ -211,7 +286,7 @@ drogon::Task<drogon::HttpResponsePtr> TableImageSender::getTableImages(drogon::H
         const std::string msg = TokenValidator::toError(status);
         const std::string code = (httpCode == k401Unauthorized) ? "unauthorized" : "internal";
         LOG_WARNING(std::string("TableImageSender: auth failed from ") + peerIp + " code=" + code + " message=" + msg);
-        co_return makeJsonResponse(makeErrorObj(code, msg), httpCode);
+        co_return makeJsonResponse(makeErrorMessage(msg), httpCode);
     }
 
     // 2) Parse JSON body
@@ -221,99 +296,100 @@ drogon::Task<drogon::HttpResponsePtr> TableImageSender::getTableImages(drogon::H
         if (body.empty())
         {
             LOG_WARNING(std::string("TableImageSender: empty body from ") + peerIp);
-            co_return makeJsonResponse(makeErrorObj("bad_request", "Empty request body"), k400BadRequest);
+            co_return makeJsonResponse(makeErrorMessage("Empty request body"), k400BadRequest);
         }
         Json::Reader reader;
         if (!reader.parse(body, rootReq) || !rootReq.isObject())
         {
             LOG_WARNING(std::string("TableImageSender: invalid JSON body from ") + peerIp);
-            co_return makeJsonResponse(makeErrorObj("bad_request", "Invalid JSON body"), k400BadRequest);
+            co_return makeJsonResponse(makeErrorMessage("Invalid JSON body"), k400BadRequest);
         }
     }
 
     if (!rootReq.isMember("nodeId") || !rootReq["nodeId"].isInt())
     {
         LOG_WARNING(std::string("TableImageSender: missing/invalid nodeId from ") + peerIp);
-        co_return makeJsonResponse(makeErrorObj("bad_request", "Missing or invalid nodeId"), k400BadRequest);
+        co_return makeJsonResponse(makeErrorMessage("Missing or invalid nodeId"), k400BadRequest);
     }
     if (!rootReq.isMember("small") || !rootReq["small"].isBool())
     {
         LOG_WARNING(std::string("TableImageSender: missing/invalid small from ") + peerIp);
-        co_return makeJsonResponse(makeErrorObj("bad_request", "Missing or invalid small"), k400BadRequest);
+        co_return makeJsonResponse(makeErrorMessage("Missing or invalid small"), k400BadRequest);
     }
-    if (!rootReq.isMember("ids") || !rootReq["ids"].isArray())
+    if (!rootReq.isMember("rowId"))
     {
-        LOG_WARNING(std::string("TableImageSender: missing/invalid ids from ") + peerIp);
-        co_return makeJsonResponse(makeErrorObj("bad_request", "Missing or invalid ids"), k400BadRequest);
+        LOG_WARNING(std::string("TableImageSender: missing rowId from ") + peerIp);
+        co_return makeJsonResponse(makeErrorMessage("Missing rowId"), k400BadRequest);
+    }
+    if (!rootReq.isMember("dbName") || !rootReq["dbName"].isString())
+    {
+        LOG_WARNING(std::string("TableImageSender: missing/invalid dbName from ") + peerIp);
+        co_return makeJsonResponse(makeErrorMessage("Missing or invalid dbName"), k400BadRequest);
     }
 
     const int nodeId = rootReq["nodeId"].asInt(); // 1-based
     const bool small = rootReq["small"].asBool();
     if (nodeId <= 0 || static_cast<size_t>(nodeId) > kTableNames.size())
     {
-        Json::Value details;
-        details["expected_range"] =
-            "1.." + std::to_string(kTableNames.size() == 0 ? 0 : kTableNames.size());
         LOG_WARNING(std::string("TableImageSender: invalid nodeId from ") + peerIp + " nodeId=" + std::to_string(nodeId));
-        co_return makeJsonResponse(makeErrorObj("bad_request", "Invalid nodeId", details), k400BadRequest);
+        co_return makeJsonResponse(makeErrorMessage("Invalid nodeId"), k400BadRequest);
     }
 
-    std::vector<int64_t> rowIds;
-    rowIds.reserve(rootReq["ids"].size());
-    for (const auto &v : rootReq["ids"])
+    const auto rowIdOpt = parseRowId(rootReq["rowId"]);
+    if (!rowIdOpt.has_value())
     {
-        if (!v.isInt64() && !v.isUInt64() && !v.isInt())
-        {
-            LOG_WARNING(std::string("TableImageSender: ids not integer array from ") + peerIp);
-            co_return makeJsonResponse(makeErrorObj("bad_request", "ids must be integer array"), k400BadRequest);
-        }
-        const int64_t id = v.asInt64();
-        if (id <= 0)
-        {
-            LOG_WARNING(std::string("TableImageSender: invalid rowId from ") + peerIp + " rowId=" + std::to_string(id));
-            co_return makeJsonResponse(makeErrorObj("bad_request", "rowId must be > 0"), k400BadRequest);
-        }
-        rowIds.push_back(id);
+        LOG_WARNING(std::string("TableImageSender: invalid rowId from ") + peerIp);
+        co_return makeJsonResponse(makeErrorMessage("Invalid rowId"), k400BadRequest);
     }
-    if (rowIds.empty())
+    const uint64_t rowIdU = *rowIdOpt;
+    if (rowIdU > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
     {
-        LOG_WARNING(std::string("TableImageSender: ids empty from ") + peerIp);
-        co_return makeJsonResponse(makeErrorObj("bad_request", "ids is empty"), k400BadRequest);
+        LOG_WARNING(std::string("TableImageSender: rowId too large from ") + peerIp + " rowId=" + std::to_string(rowIdU));
+        co_return makeJsonResponse(makeErrorMessage("rowId is out of range"), k400BadRequest);
     }
-    std::sort(rowIds.begin(), rowIds.end());
-    rowIds.erase(std::unique(rowIds.begin(), rowIds.end()), rowIds.end());
+    const int64_t rowId = static_cast<int64_t>(rowIdU);
+
+    const std::string dbName = rootReq["dbName"].asString();
+    if (dbName.empty() || dbName.rfind("image_", 0) != 0 || !isSafeIdentifier(dbName))
+    {
+        LOG_WARNING(std::string("TableImageSender: invalid dbName from ") + peerIp + " dbName=" + dbName);
+        co_return makeJsonResponse(makeErrorMessage("Invalid dbName"), k400BadRequest);
+    }
+    std::string reason;
+    if (rootReq.isMember("reason") && rootReq["reason"].isString())
+    {
+        reason = sanitizeHeaderValue(rootReq["reason"].asString());
+    }
 
     const std::string baseTable = kTableNames[static_cast<size_t>(nodeId - 1)];
     auto itImages = kTableMinioBySlot.find(baseTable);
     if (itImages == kTableMinioBySlot.end())
     {
-        Json::Value details;
-        details["table"] = baseTable;
         LOG_WARNING(std::string("TableImageSender: mapping not found baseTable=") + baseTable);
-        co_return makeJsonResponse(makeErrorObj("bad_request", "Images table mapping not found", details), k400BadRequest);
+        co_return makeJsonResponse(makeErrorMessage("Images table mapping not found"), k400BadRequest);
     }
     const std::string imagesTable = itImages->second;
     if (!isSafeIdentifier(baseTable) || !isSafeIdentifier(imagesTable))
     {
         LOG_ERROR(std::string("TableImageSender: unsafe identifiers baseTable=") + baseTable + " imagesTable=" + imagesTable);
-        co_return makeJsonResponse(makeErrorObj("internal", "Unsafe table identifier"), k500InternalServerError);
+        co_return makeJsonResponse(makeErrorMessage("Unsafe table identifier"), k500InternalServerError);
     }
 
-    // 3) Resolve image_* columns via TableInfoCache
-    std::vector<std::string> imageCols;
+    // 3) Validate dbName via TableInfoCache
+    bool dbNameFound = false;
     try
     {
         auto cache = app().getPlugin<TableInfoCache>();
         if (!cache)
         {
             LOG_ERROR("TableImageSender: TableInfoCache is not initialized");
-            co_return makeJsonResponse(makeErrorObj("internal", "TableInfoCache is not initialized"), k500InternalServerError);
+            co_return makeJsonResponse(makeErrorMessage("TableInfoCache is not initialized"), k500InternalServerError);
         }
         auto colsPtr = co_await cache->getColumns(baseTable);
         if (!colsPtr || !colsPtr->isArray())
         {
             LOG_ERROR(std::string("TableImageSender: invalid columns from TableInfoCache table=") + baseTable);
-            co_return makeJsonResponse(makeErrorObj("internal", "TableInfoCache returned invalid columns"), k500InternalServerError);
+            co_return makeJsonResponse(makeErrorMessage("TableInfoCache returned invalid columns"), k500InternalServerError);
         }
         for (const auto &c : *colsPtr)
         {
@@ -322,72 +398,59 @@ drogon::Task<drogon::HttpResponsePtr> TableImageSender::getTableImages(drogon::H
             const std::string name = c["name"].asString();
             if (name.rfind("image_", 0) == 0 && isSafeIdentifier(name))
             {
-                imageCols.push_back(name);
+                if (name == dbName)
+                {
+                    dbNameFound = true;
+                    break;
+                }
             }
         }
     }
     catch (const std::exception &)
     {
         LOG_ERROR(std::string("TableImageSender: exception while loading columns table=") + baseTable);
-        co_return makeJsonResponse(makeErrorObj("internal", "Failed to load table columns"), k500InternalServerError);
+        co_return makeJsonResponse(makeErrorMessage("Failed to load table columns"), k500InternalServerError);
+    }
+    if (!dbNameFound)
+    {
+        LOG_WARNING(std::string("TableImageSender: dbName not found in table=") + baseTable + " dbName=" + dbName);
+        co_return makeJsonResponse(makeErrorMessage("dbName is not an image column"), k400BadRequest);
     }
 
-    // Если в таблице нет image_* колонок — это не ошибка: просто вернём multipart с пустым errors.
-    // (клиент может вызывать эндпоинт для любых таблиц по nodeId)
-
-    // 4) Query baseTable: id + imageCols
-    std::unordered_map<int64_t, std::unordered_map<std::string, int64_t>> imageIdByRowAndSlot;
-    std::unordered_set<int64_t> existingRows;
-    std::unordered_set<int64_t> imageIdsSet;
-    std::vector<ErrorItem> errors;
-
+    // 4) Query baseTable: id + dbName
+    int64_t imageId = 0;
     try
     {
         auto dbClient = app().getDbClient("default");
-        std::string sql = "SELECT " + quoteIdent("id");
-        for (const auto &col : imageCols)
-        {
-            sql += ", " + quoteIdent(col);
-        }
-        sql += " FROM " + quoteIdent("public") + "." + quoteIdent(baseTable) +
-               " WHERE " + quoteIdent("id") + " IN (" + buildInList(rowIds.size(), 1) + ")";
-
+        std::string sql = "SELECT " + quoteIdent("id") + ", " + quoteIdent(dbName) +
+                          " FROM " + quoteIdent("public") + "." + quoteIdent(baseTable) +
+                          " WHERE " + quoteIdent("id") + " = $1";
         auto binder = (*dbClient << sql);
-        for (const auto id : rowIds)
-        {
-            binder << id;
-        }
+        binder << rowId;
         const auto result = co_await drogon::orm::internal::SqlAwaiter(std::move(binder));
-        for (const auto &r : result)
+        if (result.empty())
         {
-            const int64_t rid = r["id"].as<int64_t>();
-            existingRows.insert(rid);
-            for (const auto &col : imageCols)
-            {
-                const auto f = r[col];
-                if (!f.isNull())
-                {
-                    const int64_t imageId = f.as<int64_t>();
-                    imageIdByRowAndSlot[rid][col] = imageId;
-                    imageIdsSet.insert(imageId);
-                }
-            }
+            LOG_WARNING(std::string("TableImageSender: row not found table=") + baseTable + " rowId=" + std::to_string(rowId));
+            co_return makeJsonResponse(makeErrorMessage("Row not found"), k404NotFound);
+        }
+        const auto &r = result[0];
+        const auto f = r[dbName];
+        if (f.isNull())
+        {
+            LOG_WARNING(std::string("TableImageSender: image id is null rowId=") + std::to_string(rowId) + " dbName=" + dbName);
+            co_return makeJsonResponse(makeErrorMessage("Image not found"), k404NotFound);
+        }
+        imageId = f.as<int64_t>();
+        if (imageId <= 0)
+        {
+            LOG_WARNING(std::string("TableImageSender: invalid image id rowId=") + std::to_string(rowId) + " dbName=" + dbName);
+            co_return makeJsonResponse(makeErrorMessage("Image not found"), k404NotFound);
         }
     }
     catch (const DrogonDbException &)
     {
         LOG_ERROR(std::string("TableImageSender: db error while querying base table=") + baseTable);
-        co_return makeJsonResponse(makeErrorObj("internal", "db error"), k500InternalServerError);
-    }
-
-    // rowId не найден в базе -> ошибка-элемент
-    for (const auto rid : rowIds)
-    {
-        if (existingRows.find(rid) == existingRows.end())
-        {
-            LOG_WARNING(std::string("TableImageSender: row not found table=") + baseTable + " rowId=" + std::to_string(rid));
-            errors.push_back(ErrorItem{rid, "", "not_found", "Row not found"});
-        }
+        co_return makeJsonResponse(makeErrorMessage("db error"), k500InternalServerError);
     }
 
     // 5) Query imagesTable metadata
@@ -402,53 +465,81 @@ drogon::Task<drogon::HttpResponsePtr> TableImageSender::getTableImages(drogon::H
         std::string linkName;
         std::string linkUrl;
     };
-    std::unordered_map<int64_t, ImageMeta> metaById;
-    if (!imageIdsSet.empty())
+    ImageMeta meta;
+    bool metaFound = false;
+    try
     {
-        std::vector<int64_t> imageIds(imageIdsSet.begin(), imageIdsSet.end());
-        std::sort(imageIds.begin(), imageIds.end());
-
-        try
+        auto dbClient = app().getDbClient("default");
+        const std::string sql =
+            "SELECT id, slot, big_object_key, big_mime_type, small_object_key, small_mime_type, link_name, link_url "
+            "FROM " +
+            quoteIdent("public") + "." + quoteIdent(imagesTable) +
+            " WHERE id = $1";
+        auto binder = (*dbClient << sql);
+        binder << imageId;
+        const auto result = co_await drogon::orm::internal::SqlAwaiter(std::move(binder));
+        if (!result.empty())
         {
-            auto dbClient = app().getDbClient("default");
-            const std::string sql =
-                "SELECT id, slot, big_object_key, big_mime_type, small_object_key, small_mime_type, link_name, link_url "
-                "FROM " +
-                quoteIdent("public") + "." + quoteIdent(imagesTable) +
-                " WHERE id IN (" + buildInList(imageIds.size(), 1) + ")";
+            const auto &r = result[0];
+            meta.id = r["id"].as<int64_t>();
+            if (!r["slot"].isNull())
+                meta.slot = r["slot"].as<std::string>();
+            if (!r["big_object_key"].isNull())
+                meta.bigObjectKey = r["big_object_key"].as<std::string>();
+            if (!r["big_mime_type"].isNull())
+                meta.bigMime = r["big_mime_type"].as<std::string>();
+            if (!r["small_object_key"].isNull())
+                meta.smallObjectKey = r["small_object_key"].as<std::string>();
+            if (!r["small_mime_type"].isNull())
+                meta.smallMime = r["small_mime_type"].as<std::string>();
+            if (!r["link_name"].isNull())
+                meta.linkName = r["link_name"].as<std::string>();
+            if (!r["link_url"].isNull())
+                meta.linkUrl = r["link_url"].as<std::string>();
+            metaFound = true;
+        }
+    }
+    catch (const DrogonDbException &)
+    {
+        LOG_ERROR(std::string("TableImageSender: db error while querying images table=") + imagesTable);
+        co_return makeJsonResponse(makeErrorMessage("db error"), k500InternalServerError);
+    }
+    if (!metaFound)
+    {
+        LOG_WARNING(std::string("TableImageSender: image meta not found imagesTable=") + imagesTable +
+                    " imageId=" + std::to_string(imageId) + " rowId=" + std::to_string(rowId) + " dbName=" + dbName);
+        co_return makeJsonResponse(makeErrorMessage("Image not found"), k404NotFound);
+    }
+    if (!meta.slot.empty() && meta.slot != dbName)
+    {
+        LOG_WARNING(std::string("TableImageSender: slot mismatch rowId=") + std::to_string(rowId) +
+                    " dbName=" + dbName + " meta.slot=" + meta.slot);
+        co_return makeJsonResponse(makeErrorMessage("Image slot mismatch"), k500InternalServerError);
+    }
 
-            auto binder = (*dbClient << sql);
-            for (const auto id : imageIds)
-            {
-                binder << id;
-            }
-            const auto result = co_await drogon::orm::internal::SqlAwaiter(std::move(binder));
-            for (const auto &r : result)
-            {
-                ImageMeta m;
-                m.id = r["id"].as<int64_t>();
-                if (!r["slot"].isNull())
-                    m.slot = r["slot"].as<std::string>();
-                if (!r["big_object_key"].isNull())
-                    m.bigObjectKey = r["big_object_key"].as<std::string>();
-                if (!r["big_mime_type"].isNull())
-                    m.bigMime = r["big_mime_type"].as<std::string>();
-                if (!r["small_object_key"].isNull())
-                    m.smallObjectKey = r["small_object_key"].as<std::string>();
-                if (!r["small_mime_type"].isNull())
-                    m.smallMime = r["small_mime_type"].as<std::string>();
-                if (!r["link_name"].isNull())
-                    m.linkName = r["link_name"].as<std::string>();
-                if (!r["link_url"].isNull())
-                    m.linkUrl = r["link_url"].as<std::string>();
-                metaById.emplace(m.id, std::move(m));
-            }
-        }
-        catch (const DrogonDbException &)
+    std::string objectKey;
+    std::string mime;
+    if (small)
+    {
+        if (meta.smallObjectKey.empty())
         {
-            LOG_ERROR(std::string("TableImageSender: db error while querying images table=") + imagesTable);
-            co_return makeJsonResponse(makeErrorObj("internal", "db error"), k500InternalServerError);
+            LOG_WARNING(std::string("TableImageSender: missing small_object_key rowId=") + std::to_string(rowId) +
+                        " dbName=" + dbName + " imageId=" + std::to_string(imageId));
+            co_return makeJsonResponse(makeErrorMessage("Small image not found"), k404NotFound);
         }
+        objectKey = meta.smallObjectKey;
+        mime = meta.smallMime;
+    }
+    else
+    {
+        if (meta.bigObjectKey.empty())
+        {
+            LOG_WARNING(std::string("TableImageSender: missing big_object_key rowId=") + std::to_string(rowId) +
+                        " dbName=" + dbName + " imageId=" + std::to_string(imageId));
+            co_return makeJsonResponse(makeErrorMessage("Image not found"), k404NotFound);
+        }
+        objectKey = meta.bigObjectKey;
+        mime = meta.bigMime;
     }
 
     // 6) MinIO fetch + multipart build
@@ -456,114 +547,47 @@ drogon::Task<drogon::HttpResponsePtr> TableImageSender::getTableImages(drogon::H
     if (!minioPlugin)
     {
         LOG_ERROR("TableImageSender: MinioPlugin is not initialized");
-        co_return makeJsonResponse(makeErrorObj("internal", "MinioPlugin is not initialized"), k500InternalServerError);
+        co_return makeJsonResponse(makeErrorMessage("MinioPlugin is not initialized"), k500InternalServerError);
     }
     MinioClient &minio = minioPlugin->client();
     const auto &cfg = minioPlugin->minioConfig();
     const std::string bucket = cfg.bucket;
 
+    std::vector<uint8_t> bytes;
+    std::string mimeFromMinio;
+    const bool ok = minio.getObject(bucket, objectKey, bytes, &mimeFromMinio);
+    if (!ok)
+    {
+        LOG_ERROR(std::string("TableImageSender: MinIO getObject failed bucket=") + bucket +
+                  " key=" + objectKey + " err=" + minio.lastError());
+        co_return makeJsonResponse(makeErrorMessage("Image not found"), k404NotFound);
+    }
+    if (mime.empty() && !mimeFromMinio.empty())
+    {
+        mime = mimeFromMinio;
+    }
+    mime = normalizeImageMime(mime, objectKey);
+
     const std::string boundary = "boundary_" + drogon::utils::getUuid(true);
     std::string multipartBody;
     multipartBody.reserve(1024);
 
-    for (const auto &rowKv : imageIdByRowAndSlot)
-    {
-        const int64_t rid = rowKv.first;
-        for (const auto &slotKv : rowKv.second)
-        {
-            const std::string &dbName = slotKv.first; // image_* column name == slot
-            const int64_t imageId = slotKv.second;
+    const std::string filename = basenameFromKey(objectKey);
+    appendBinaryPart(multipartBody,
+                     boundary,
+                     static_cast<int64_t>(rowId),
+                     dbName,
+                     mime,
+                     filename,
+                     reason,
+                     meta.linkName,
+                     meta.linkUrl,
+                     bytes);
 
-            auto it = metaById.find(imageId);
-            if (it == metaById.end())
-            {
-                LOG_WARNING(std::string("TableImageSender: image meta not found imagesTable=") + imagesTable +
-                            " imageId=" + std::to_string(imageId) + " rowId=" + std::to_string(rid) + " dbName=" + dbName);
-                errors.push_back(ErrorItem{rid, dbName, "missing_meta", "Image metadata row not found"});
-                continue;
-            }
-
-            const ImageMeta &m = it->second;
-            // Консистентность: slot в *_images должен совпадать с именем image_* колонки
-            if (!m.slot.empty() && m.slot != dbName)
-            {
-                LOG_WARNING(std::string("TableImageSender: slot mismatch rowId=") + std::to_string(rid) +
-                            " dbName=" + dbName + " meta.slot=" + m.slot);
-                errors.push_back(ErrorItem{rid, dbName, "slot_mismatch", "Image slot mismatch"});
-                continue;
-            }
-
-            std::string objectKey;
-            std::string mime;
-            if (small)
-            {
-                if (m.smallObjectKey.empty())
-                {
-                    // Вы выбрали: ошибка-элемент, без бинарной части
-                    LOG_WARNING(std::string("TableImageSender: missing small_object_key rowId=") + std::to_string(rid) +
-                                " dbName=" + dbName + " imageId=" + std::to_string(imageId));
-                    errors.push_back(ErrorItem{rid, dbName, "missing_small", "small_object_key is null"});
-                    continue;
-                }
-                objectKey = m.smallObjectKey;
-                mime = m.smallMime;
-            }
-            else
-            {
-                if (m.bigObjectKey.empty())
-                {
-                    LOG_WARNING(std::string("TableImageSender: missing big_object_key rowId=") + std::to_string(rid) +
-                                " dbName=" + dbName + " imageId=" + std::to_string(imageId));
-                    errors.push_back(ErrorItem{rid, dbName, "missing_big", "big_object_key is null"});
-                    continue;
-                }
-                objectKey = m.bigObjectKey;
-                mime = m.bigMime;
-            }
-
-            std::vector<uint8_t> bytes;
-            std::string mimeFromMinio;
-            const bool ok = minio.getObject(bucket, objectKey, bytes, &mimeFromMinio);
-            if (!ok)
-            {
-                LOG_ERROR(std::string("TableImageSender: MinIO getObject failed bucket=") + bucket +
-                          " key=" + objectKey + " err=" + minio.lastError());
-                errors.push_back(ErrorItem{rid, dbName, "storage_error", "Failed to download object from storage"});
-                continue;
-            }
-            if (mime.empty() && !mimeFromMinio.empty())
-            {
-                mime = mimeFromMinio;
-            }
-
-            const std::string filename = basenameFromKey(objectKey);
-            appendBinaryPart(multipartBody,
-                             boundary,
-                             rid,
-                             dbName,
-                             mime,
-                             filename,
-                             m.linkName,
-                             m.linkUrl,
-                             bytes);
-        }
-    }
-
-    // Финальная JSON-часть с errors
+    // Финальная JSON-часть: ok=true, errors=[]
     Json::Value okJson(Json::objectValue);
     okJson["ok"] = true;
-    Json::Value errArr(Json::arrayValue);
-    for (const auto &e : errors)
-    {
-        Json::Value item(Json::objectValue);
-        item["rowId"] = static_cast<Json::Int64>(e.rowId);
-        if (!e.dbName.empty())
-            item["dbName"] = e.dbName;
-        item["code"] = e.code;
-        item["message"] = e.message;
-        errArr.append(std::move(item));
-    }
-    okJson["errors"] = std::move(errArr);
+    okJson["errors"] = Json::Value(Json::arrayValue);
     appendJsonPart(multipartBody, boundary, okJson);
 
     multipartBody += "--";

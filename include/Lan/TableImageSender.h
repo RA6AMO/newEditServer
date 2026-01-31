@@ -11,7 +11,7 @@
 /// Выдача изображений для таблиц со схемой "images-by-slot".
 /// POST /table/images/get
 /// Headers: token
-/// Body: { "nodeId": <int, 1-based>, "small": <bool>, "ids": [<rowId>, ...] }
+/// Body: { "nodeId": <int, 1-based>, "small": <bool>, "rowId": <uint64 or string>, "dbName": <string> }
 class TableImageSender : public drogon::HttpController<TableImageSender>
 {
 public:
