@@ -107,6 +107,20 @@ TableDataService::getPage(const std::string &tableName,
         whereSql = TableQueryBuilder::buildWhere(filters, allowedColumns);
     }
 
+    // Хардкодное ограничение для дочерних таблиц:
+    // всегда выбираем строки, где tool_type_id IS NULL.
+    if (baseTable != tableName)
+    {
+        if (whereSql.empty())
+        {
+            whereSql = "WHERE tool_type_id IS NULL";
+        }
+        else
+        {
+            whereSql += " AND tool_type_id IS NULL";
+        }
+}
+
     try
     {
         out.total = co_await repo_->countRows(schema_, baseTable, whereSql);

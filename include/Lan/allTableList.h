@@ -20,9 +20,20 @@ struct ChildTableSpec
     std::vector<std::string> exclude;
 };
 
+/*
+Нужно раскомментировать/добавить:
+{"mills_catalog", {"milling_tool_catalog", {"col_a", "col_b"}}},
+mills_catalog — имя дочерней таблицы (логическое, для клиента).
+milling_tool_catalog — родитель (реальная таблица в БД).
+Вектор — список колонок, которые нужно скрыть для ребёнка. Если скрывать пока ничего не нужно, оставь пустой: {}.
+То есть минимально:
+{"mills_catalog", {"milling_tool_catalog", {}}},
+После этого resolveBaseTable("mills_catalog") будет возвращать milling_tool_catalog, и SQL пойдёт в реальную таблицу.
+*/
+
 // Виртуальные "дети": используют таблицу parent, но скрывают указанные колонки.
 inline const std::unordered_map<std::string, ChildTableSpec> kChildTables = {
-    // {"mills_catalog", {"milling_tool_catalog", {"col_a", "col_b"}}},
+     {"mills_catalog", {"milling_tool_catalog", {"col_a", "col_b"}}},
 };
 
 inline const std::unordered_map<std::string, std::string> kTableMinioBySlot = {
