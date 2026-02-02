@@ -329,7 +329,7 @@ drogon::Task<drogon::HttpResponsePtr> TableImageSender::getTableImages(drogon::H
 
     const int nodeId = rootReq["nodeId"].asInt(); // 1-based
     const bool small = rootReq["small"].asBool();
-    if (nodeId <= 0 || static_cast<size_t>(nodeId) > kTableNames.size())
+    if (nodeId <= 0)
     {
         LOG_WARNING(std::string("TableImageSender: invalid nodeId from ") + peerIp + " nodeId=" + std::to_string(nodeId));
         co_return makeJsonResponse(makeErrorMessage("Invalid nodeId"), k400BadRequest);
@@ -361,7 +361,12 @@ drogon::Task<drogon::HttpResponsePtr> TableImageSender::getTableImages(drogon::H
         reason = sanitizeHeaderValue(rootReq["reason"].asString());
     }
 
-    const std::string baseTable = kTableNames[static_cast<size_t>(nodeId - 1)];
+    std::string baseTable;
+    if (!tryGetTableNameById(nodeId, baseTable))
+    {
+        LOG_WARNING(std::string("TableImageSender: invalid nodeId from ") + peerIp + " nodeId=" + std::to_string(nodeId));
+        co_return makeJsonResponse(makeErrorMessage("Invalid nodeId"), k400BadRequest);
+    }
     auto itImages = kTableMinioBySlot.find(baseTable);
     if (itImages == kTableMinioBySlot.end())
     {

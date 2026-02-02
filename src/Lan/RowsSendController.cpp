@@ -193,17 +193,7 @@ drogon::Task<drogon::HttpResponsePtr> RowsSendController::getTableData(drogon::H
     if (nodeId <= 0)
     {
         Json::Value details;
-        details["expected_range"] =
-            "1.." + std::to_string(kTableNames.size() == 0 ? 0 : kTableNames.size());
-        co_return badRequest("invalid nodeId", details);
-    }
-
-    const int64_t idx64 = nodeId - 1; // 1-based -> 0-based
-    if (idx64 < 0 || static_cast<size_t>(idx64) >= kTableNames.size())
-    {
-        Json::Value details;
-        details["expected_range"] =
-            "1.." + std::to_string(kTableNames.size() == 0 ? 0 : kTableNames.size());
+        details["expected_range"] = formatTableIdRange();
         co_return badRequest("invalid nodeId", details);
     }
 
@@ -234,7 +224,13 @@ drogon::Task<drogon::HttpResponsePtr> RowsSendController::getTableData(drogon::H
             limit = 0;
     }
 
-    const std::string tableName = kTableNames[static_cast<size_t>(idx64)];
+    std::string tableName;
+    if (!tryGetTableNameById(static_cast<int>(nodeId), tableName))
+    {
+        Json::Value details;
+        details["expected_range"] = formatTableIdRange();
+        co_return badRequest("invalid nodeId", details);
+    }
 
     // 5) filters (опционально): URL-encoded JSON array.
     // Если filters отсутствует или пустой — считаем, что фильтров нет и возвращаем все строки (в будущем Service).

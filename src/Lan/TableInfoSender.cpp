@@ -59,22 +59,26 @@ drogon::Task<drogon::HttpResponsePtr> TableInfoSender::getTableInfo(drogon::Http
     try
     {
         nodeId = std::stoi(nodeIdHeader);
-        nodeId -= 1;
     }
     catch (...)
     {
         co_return makeJsonResponse(makeErrorObj("bad_request", "invalid nodeId header"), k400BadRequest);
     }
 
-    if (nodeId < 0 || static_cast<size_t>(nodeId) >= kTableNames.size())
+    if (nodeId <= 0)
     {
         Json::Value details;
-        details["expected_range"] =
-            "0.." + std::to_string(kTableNames.size() == 0 ? 0 : (kTableNames.size() - 1));
+        details["expected_range"] = formatTableIdRange();
         co_return makeJsonResponse(makeErrorObj("bad_request", "invalid nodeId", details), k400BadRequest);
     }
 
-    const std::string tableName = kTableNames[static_cast<size_t>(nodeId)];
+    std::string tableName;
+    if (!tryGetTableNameById(nodeId, tableName))
+    {
+        Json::Value details;
+        details["expected_range"] = formatTableIdRange();
+        co_return makeJsonResponse(makeErrorObj("bad_request", "invalid nodeId", details), k400BadRequest);
+    }
     Json::Value data;
     data["nodeId"] = nodeId;
     data["table"] = tableName;

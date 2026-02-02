@@ -325,7 +325,21 @@ public:
         // - Берём payload.fields как набор колонок.
         // - Все значения параметризованы.
         // - Возвращаем rowId.
-        SqlCommand cmd = buildInsertCommand(parsed.payload, schema_, tableName_);
+        Json::Value payload = parsed.payload;
+        if (payload.isMember("fields") && payload["fields"].isObject())
+        {
+            Json::Value &fields = payload["fields"];
+            if (!fields.isMember("tool_type_id") || fields["tool_type_id"].isNull())
+            {
+                int tableId = 0;
+                if (tryGetTableIdByName(tableName_, tableId))
+                {
+                    fields["tool_type_id"] = static_cast<Json::Int64>(tableId);
+                }
+            }
+        }
+
+        SqlCommand cmd = buildInsertCommand(payload, schema_, tableName_);
         auto binder = (*trans << cmd.sql);
         for (const auto &bind : cmd.binders)
         {
@@ -582,10 +596,11 @@ std::shared_ptr<RowWritePlannerRegistry> createDefaultRowWritePlannerRegistry()
     // - Если появляется новый тип вложений, создайте свой planner (например FileSlotsPlanner)
     //   и зарегистрируйте его здесь.
     auto registry = std::make_shared<RowWritePlannerRegistry>();
-    registry->registerPlanner(kTableNames[0],
+    const std::string &defaultTableName = kTableNames.at(kDefaultTableId);
+    registry->registerPlanner(defaultTableName,
                               std::make_shared<ImageSlotsPlanner>(
-                                    kTableNames[0],
-                                    kTableMinioBySlot.at(kTableNames[0]),
+                                    defaultTableName,
+                                    kTableMinioBySlot.at(defaultTableName),
                                     "tool_id",
                                     "public"));
     return registry;
