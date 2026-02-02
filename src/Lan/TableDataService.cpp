@@ -4,6 +4,7 @@
 #include "Lan/TableRepository.h"
 #include "Lan/ServiceErrors.h"
 #include "TableInfoCache.h"
+#include "Lan/allTableList.h"
 #include "Loger/Logger.h"
 
 #include <drogon/orm/Exception.h>
@@ -85,6 +86,8 @@ TableDataService::getPage(const std::string &tableName,
     if (!cache)
         throw std::runtime_error("TableInfoCache is not initialized");
 
+    const std::string baseTable = resolveBaseTable(tableName);
+
     // Колонки + whitelist
     auto colsPtr = co_await cache->getColumns(tableName);
     const Json::Value &cols = *colsPtr;
@@ -106,8 +109,8 @@ TableDataService::getPage(const std::string &tableName,
 
     try
     {
-        out.total = co_await repo_->countRows(schema_, tableName, whereSql);
-        auto result = co_await repo_->selectPage(schema_, tableName, whereSql, out.offset, out.limit);
+        out.total = co_await repo_->countRows(schema_, baseTable, whereSql);
+        auto result = co_await repo_->selectPage(schema_, baseTable, whereSql, out.offset, out.limit);
 
         Json::Value rows(Json::arrayValue);
         rows.resize(0);

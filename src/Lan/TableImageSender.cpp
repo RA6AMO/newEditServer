@@ -367,6 +367,7 @@ drogon::Task<drogon::HttpResponsePtr> TableImageSender::getTableImages(drogon::H
         LOG_WARNING(std::string("TableImageSender: invalid nodeId from ") + peerIp + " nodeId=" + std::to_string(nodeId));
         co_return makeJsonResponse(makeErrorMessage("Invalid nodeId"), k400BadRequest);
     }
+    baseTable = resolveBaseTable(baseTable);
     auto itImages = kTableMinioBySlot.find(baseTable);
     if (itImages == kTableMinioBySlot.end())
     {

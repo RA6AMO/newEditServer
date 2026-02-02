@@ -140,6 +140,7 @@ public:
                       std::string fkColumn,
                       std::string schema)
         : tableName_(std::move(tableName)),
+          baseTable_(resolveBaseTable(tableName_)),
           imagesTableName_(std::move(imagesTableName)),
           fkColumn_(std::move(fkColumn)),
           schema_(std::move(schema))
@@ -339,7 +340,7 @@ public:
             }
         }
 
-        SqlCommand cmd = buildInsertCommand(payload, schema_, tableName_);
+        SqlCommand cmd = buildInsertCommand(payload, schema_, baseTable_);
         auto binder = (*trans << cmd.sql);
         for (const auto &bind : cmd.binders)
         {
@@ -566,6 +567,7 @@ private:
 
 private:
     std::string tableName_;
+    std::string baseTable_;
     std::string imagesTableName_;
     std::string fkColumn_;
     std::string schema_;
@@ -583,6 +585,15 @@ std::shared_ptr<ITableRowWritePlanner> RowWritePlannerRegistry::getPlanner(const
     auto it = planners_.find(tableName);
     if (it == planners_.end())
     {
+        const std::string baseTable = resolveBaseTable(tableName);
+        if (baseTable != tableName)
+        {
+            auto itBase = planners_.find(baseTable);
+            if (itBase != planners_.end())
+            {
+                return itBase->second;
+            }
+        }
         return nullptr;
     }
     return it->second;
