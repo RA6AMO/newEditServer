@@ -13,6 +13,7 @@ inline const std::unordered_map<int, std::string> kTableNames = {
 };
 
 inline const int kDefaultTableId = 1;
+inline const std::string kChildTypeIdColumn = "child_type_id";
 
 struct ChildTableSpec
 {
@@ -33,7 +34,7 @@ milling_tool_catalog — родитель (реальная таблица в Б
 
 // Виртуальные "дети": используют таблицу parent, но скрывают указанные колонки.
 inline const std::unordered_map<std::string, ChildTableSpec> kChildTables = {
-     {"mills_catalog", {"milling_tool_catalog", {"col_a", "col_b"}}},
+     {"mills_catalog", {"milling_tool_catalog", {/*"taper_angle_deg"*/}}},
 };
 
 inline const std::unordered_map<std::string, std::string> kTableMinioBySlot = {

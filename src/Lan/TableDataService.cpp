@@ -107,19 +107,26 @@ TableDataService::getPage(const std::string &tableName,
         whereSql = TableQueryBuilder::buildWhere(filters, allowedColumns);
     }
 
-    // Хардкодное ограничение для дочерних таблиц:
-    // всегда выбираем строки, где tool_type_id IS NULL.
+    // Ограничение для дочерних таблиц:
+    // выбираем строки по child_type_id = <id дочерней таблицы>.
     if (baseTable != tableName)
     {
+        int tableId = 0;
+        if (!tryGetTableIdByName(tableName, tableId))
+        {
+            throw BadRequestError("unknown child table");
+        }
+        const std::string childFilter =
+            std::string("WHERE ") + kChildTypeIdColumn + " = " + std::to_string(tableId);
         if (whereSql.empty())
         {
-            whereSql = "WHERE tool_type_id IS NULL";
+            whereSql = childFilter;
         }
         else
         {
-            whereSql += " AND tool_type_id IS NULL";
+            whereSql += " AND " + std::string(kChildTypeIdColumn) + " = " + std::to_string(tableId);
         }
-}
+    }
 
     try
     {

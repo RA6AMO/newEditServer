@@ -120,3 +120,6 @@ LEXXES, [07.12.2025 21:16]
 
 LEXXES, [07.12.2025 21:16]
 3. Посмотреть столбцы конкретной таблицы = \d users
+
+flyway -configFiles=flyway.conf migrate
+flyway -configFiles=flyway.conf clean

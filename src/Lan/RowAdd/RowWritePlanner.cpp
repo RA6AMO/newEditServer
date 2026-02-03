@@ -163,7 +163,9 @@ public:
             co_return err;
         }
 
-        if (payload["table"].asString() != tableName_)
+        const std::string payloadTable = payload["table"].asString();
+        const std::string payloadBaseTable = resolveBaseTable(payloadTable);
+        if (payloadBaseTable != baseTable_)
         {
             err.code = "bad_request";
             err.message = "Invalid payload: unexpected table";
@@ -189,7 +191,7 @@ public:
         {
             throw std::runtime_error("TableInfoCache is not initialized");
         }
-        auto colsPtr = co_await cache->getColumns(tableName_);
+        auto colsPtr = co_await cache->getColumns(payloadTable);
         if (!colsPtr)
         {
             throw std::runtime_error("TableInfoCache returned null columns pointer");
@@ -330,12 +332,15 @@ public:
         if (payload.isMember("fields") && payload["fields"].isObject())
         {
             Json::Value &fields = payload["fields"];
-            if (!fields.isMember("tool_type_id") || fields["tool_type_id"].isNull())
+            if (!fields.isMember(kChildTypeIdColumn) || fields[kChildTypeIdColumn].isNull())
             {
                 int tableId = 0;
-                if (tryGetTableIdByName(tableName_, tableId))
+                const std::string tableForType = payload.isMember("table") && payload["table"].isString()
+                                                     ? payload["table"].asString()
+                                                     : tableName_;
+                if (tryGetTableIdByName(tableForType, tableId))
                 {
-                    fields["tool_type_id"] = static_cast<Json::Int64>(tableId);
+                    fields[kChildTypeIdColumn] = static_cast<Json::Int64>(tableId);
                 }
             }
         }

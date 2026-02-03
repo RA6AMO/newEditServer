@@ -6,8 +6,8 @@ CREATE TABLE IF NOT EXISTS public.milling_tool_catalog (
     name TEXT NULL,
 
     -- reference ids: ссылки на локальные справочники (FOREIGN KEY можно добавить позже)
-    -- tool_type_id: тип фрезы (концевая/сферическая/черновая/фасочная и т.п.)
-    tool_type_id BIGINT NULL,
+    -- child_type_id: идентификатор дочерней "логической" таблицы
+    child_type_id BIGINT NULL,
     -- brand_id: производитель/бренд
     brand_id BIGINT NULL,
     -- shank_type_id: тип хвостовика (цилиндр/Weldon/конус и т.п.)
@@ -55,8 +55,8 @@ CREATE TABLE IF NOT EXISTS public.milling_tool_catalog (
 CREATE INDEX IF NOT EXISTS idx_milling_tool_catalog_name
     ON public.milling_tool_catalog (name);
 
-CREATE INDEX IF NOT EXISTS idx_milling_tool_catalog_tool_type_id
-    ON public.milling_tool_catalog (tool_type_id);
+CREATE INDEX IF NOT EXISTS idx_milling_tool_catalog_child_type_id
+    ON public.milling_tool_catalog (child_type_id);
 
 CREATE INDEX IF NOT EXISTS idx_milling_tool_catalog_brand_id
     ON public.milling_tool_catalog (brand_id);

@@ -1,10 +1,12 @@
 #include "Lan/RowAdd/RowWriteService.h"
+#include "Loger/Logger.h"
 #include "Storage/MinioPlugin.h"
 
 #include <drogon/drogon.h>
 #include <drogon/utils/Utilities.h>
 
 #include <algorithm>
+#include <sstream>
 #include <stdexcept>
 
 RowWriteService::RowWriteService()
@@ -62,6 +64,10 @@ drogon::Task<void> RowWriteService::executePlan(
         auto it = attachmentIndex.find(upload.attachmentId);
         if (it == attachmentIndex.end())
         {
+            std::ostringstream oss;
+            oss << "RowWriteError: attachment not found for upload op"
+                << " attachmentId=" << upload.attachmentId;
+            Logger::instance().error(oss.str());
             throw RowWriteError("bad_request", "Attachment not found for upload op", drogon::k400BadRequest);
         }
         const AttachmentInput *att = it->second;
@@ -76,10 +82,12 @@ drogon::Task<void> RowWriteService::executePlan(
             details["objectKey"] = upload.objectKey;
             details["mimeType"] = upload.mimeType;
             details["sizeBytes"] = static_cast<Json::UInt64>(att->data.size());
-            LOG_ERROR << "MinIO upload failed: bucket=" << upload.bucket
-                      << " key=" << upload.objectKey
-                      << " size=" << att->data.size()
-                      << " (see ./logs/error.log for details)";
+            std::ostringstream oss;
+            oss << "RowWriteError: MinIO upload failed"
+                << " bucket=" << upload.bucket
+                << " key=" << upload.objectKey
+                << " size=" << att->data.size();
+            Logger::instance().error(oss.str());
             throw RowWriteError("storage_error", "Failed to upload object to storage", drogon::k500InternalServerError, details);
         }
         uploadedObjects.push_back(UploadedObject{upload.bucket, upload.objectKey});
@@ -100,6 +108,7 @@ drogon::Task<WriteResult> RowWriteService::write(const RowController::ParsedRequ
     // - логика конкретной таблицы/типов НЕ должна появляться здесь
     if (!parsed.payload.isObject() || !parsed.payload.isMember("table") || !parsed.payload["table"].isString())
     {
+        Logger::instance().error("RowWriteError: invalid payload, missing table");
         throw RowWriteError("bad_request", "Invalid payload: missing table", drogon::k400BadRequest);
     }
     const std::string table = parsed.payload["table"].asString();
@@ -108,11 +117,20 @@ drogon::Task<WriteResult> RowWriteService::write(const RowController::ParsedRequ
     {
         Json::Value details;
         details["table"] = table;
+        std::ostringstream oss;
+        oss << "RowWriteError: table is not supported table=" << table;
+        Logger::instance().error(oss.str());
         throw RowWriteError("bad_request", "Table is not supported", drogon::k400BadRequest, details);
     }
 
     if (auto validationErr = co_await planner->validate(parsed))
     {
+        std::ostringstream oss;
+        oss << "RowWriteError: validation failed"
+            << " code=" << validationErr->code
+            << " status=" << static_cast<int>(validationErr->status)
+            << " message=" << validationErr->message;
+        Logger::instance().error(oss.str());
         throw RowWriteError(validationErr->code,
                             validationErr->message,
                             validationErr->status,
@@ -124,6 +142,7 @@ drogon::Task<WriteResult> RowWriteService::write(const RowController::ParsedRequ
     auto minioPlugin = drogon::app().getPlugin<MinioPlugin>();
     if (!minioPlugin)
     {
+        Logger::instance().error("RowWriteError: MinioPlugin is not initialized");
         throw RowWriteError("internal", "MinioPlugin is not initialized", drogon::k500InternalServerError);
     }
     MinioClient &minioClient = minioPlugin->client();
