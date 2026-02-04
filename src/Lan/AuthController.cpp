@@ -1,5 +1,6 @@
 #include "AuthController.h"
 #include "AppCache.h"
+#include "Loger/Logger.h"
 
 #include <drogon/drogon.h>
 #include <drogon/orm/DbClient.h>
@@ -117,6 +118,7 @@ TokenValidator::check(const std::string &token, const std::string &clientIp) con
     }
     catch (const DrogonDbException &)
     {
+        LOG_ERROR("TokenValidator db error while checking token");
         co_return Status::DbError;
     }
 }
@@ -161,6 +163,7 @@ AuthController::login(drogon::HttpRequestPtr req)
         auto jsonPtr = req->getJsonObject();
         if (!jsonPtr)
         {
+            LOG_WARNING("AuthController::login invalid json");
             Json::Value err;
             err["error"] = "invalid json";
 
@@ -175,6 +178,7 @@ AuthController::login(drogon::HttpRequestPtr req)
         if (!json.isMember("login") || !json.isMember("password") ||
             !json["login"].isString() || !json["password"].isString())
         {
+            LOG_WARNING("AuthController::login missing or invalid login/password");
             Json::Value err;
             err["error"] = "missing or invalid login/password";
 
@@ -189,6 +193,7 @@ AuthController::login(drogon::HttpRequestPtr req)
         // Валидация как в Qt‑клиенте.
         if (!isValidInput(login, InputType::LOG) || !isValidInput(password, InputType::PAS))
         {
+            LOG_WARNING("AuthController::login invalid login/password format");
             Json::Value err;
             err["error"] = "invalid login or password format";
 
@@ -213,6 +218,7 @@ AuthController::login(drogon::HttpRequestPtr req)
             // Если пользователь не найден.
             if (resultRows.empty())
             {
+                LOG_WARNING("AuthController::login invalid login or password");
                 Json::Value err;
                 err["error"] = "invalid login or password";
 
@@ -232,6 +238,7 @@ AuthController::login(drogon::HttpRequestPtr req)
 
             if (verifyResult != ARGON2_OK)
             {
+                LOG_WARNING("AuthController::login invalid login or password");
                 Json::Value err;
                 err["error"] = "invalid login or password";
 
@@ -265,6 +272,7 @@ AuthController::login(drogon::HttpRequestPtr req)
         }
         catch (const DrogonDbException &)
         {
+            LOG_ERROR("AuthController::login db error");
             Json::Value err;
             err["error"] = "db error";
 
@@ -273,8 +281,9 @@ AuthController::login(drogon::HttpRequestPtr req)
             co_return resp;
         }
     }
-    catch (const std::exception &)
+    catch (const std::exception &e)
     {
+        LOG_ERROR(std::string("AuthController::login internal error: ") + e.what());
         Json::Value err;
         err["error"] = "internal error";
 
@@ -294,6 +303,7 @@ AuthController::registerUser(drogon::HttpRequestPtr req)
         auto jsonPtr = req->getJsonObject();
         if (!jsonPtr)
         {
+            LOG_WARNING("AuthController::registerUser invalid json");
             Json::Value err;
             err["error"] = "invalid json";
 
@@ -308,6 +318,7 @@ AuthController::registerUser(drogon::HttpRequestPtr req)
         if (!json.isMember("login") || !json.isMember("password") ||
             !json["login"].isString() || !json["password"].isString())
         {
+            LOG_WARNING("AuthController::registerUser missing or invalid login/password");
             Json::Value err;
             err["error"] = "missing or invalid login/password";
 
@@ -322,6 +333,7 @@ AuthController::registerUser(drogon::HttpRequestPtr req)
         // Валидация как в Qt‑клиенте.
         if (!isValidInput(login, InputType::LOG) || !isValidInput(password, InputType::PAS))
         {
+            LOG_WARNING("AuthController::registerUser invalid login/password format");
             Json::Value err;
             err["error"] = "invalid login or password format";
 
@@ -355,6 +367,7 @@ AuthController::registerUser(drogon::HttpRequestPtr req)
 
         if (result != ARGON2_OK)
         {
+            LOG_ERROR("AuthController::registerUser password hash error");
             Json::Value err;
             err["error"] = "password hash error";
 
@@ -394,6 +407,7 @@ AuthController::registerUser(drogon::HttpRequestPtr req)
         }
         catch (const DrogonDbException &)
         {
+            LOG_ERROR("AuthController::registerUser db error");
             Json::Value err;
             err["error"] = "db error";
 
@@ -402,8 +416,9 @@ AuthController::registerUser(drogon::HttpRequestPtr req)
             co_return resp;
         }
     }
-    catch (const std::exception &)
+    catch (const std::exception &e)
     {
+        LOG_ERROR(std::string("AuthController::registerUser internal error: ") + e.what());
         Json::Value err;
         err["error"] = "internal error";
 
@@ -422,6 +437,7 @@ AuthController::autoConnect(drogon::HttpRequestPtr req)
         auto jsonPtr = req->getJsonObject();
         if (!jsonPtr)
         {
+            LOG_WARNING("AuthController::autoConnect invalid json");
             Json::Value err;
             err["error"] = "invalid json";
 
@@ -435,6 +451,7 @@ AuthController::autoConnect(drogon::HttpRequestPtr req)
         // Проверяем наличие и тип поля token.
         if (!json.isMember("token") || !json["token"].isString())
         {
+            LOG_WARNING("AuthController::autoConnect missing or invalid token");
             Json::Value err;
             err["error"] = "missing or invalid token";
 
@@ -463,6 +480,15 @@ AuthController::autoConnect(drogon::HttpRequestPtr req)
             co_return resp;
         }
 
+        if (status == TokenValidator::Status::DbError)
+        {
+            LOG_ERROR("AuthController::autoConnect token validation db error");
+        }
+        else
+        {
+            LOG_WARNING("AuthController::autoConnect token validation failed");
+        }
+
         Json::Value err;
         err["error"] = TokenValidator::toError(status);
 
@@ -470,8 +496,9 @@ AuthController::autoConnect(drogon::HttpRequestPtr req)
         resp->setStatusCode(TokenValidator::toHttpCode(status));
         co_return resp;
     }
-    catch (const std::exception &)
+    catch (const std::exception &e)
     {
+        LOG_ERROR(std::string("AuthController::autoConnect internal error: ") + e.what());
         Json::Value err;
         err["error"] = "internal error";
 
