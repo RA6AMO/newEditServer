@@ -332,14 +332,16 @@ public:
         if (payload.isMember("fields") && payload["fields"].isObject())
         {
             Json::Value &fields = payload["fields"];
-            if (!fields.isMember(kChildTypeIdColumn) || fields[kChildTypeIdColumn].isNull())
+            const std::string payloadTable = payload.isMember("table") && payload["table"].isString()
+                                                 ? payload["table"].asString()
+                                                 : tableName_;
+            const std::string payloadBase = resolveBaseTable(payloadTable);
+            if (payloadBase == baseTable_ && payloadTable != payloadBase)
             {
                 int tableId = 0;
-                const std::string tableForType = payload.isMember("table") && payload["table"].isString()
-                                                     ? payload["table"].asString()
-                                                     : tableName_;
-                if (tryGetTableIdByName(tableForType, tableId))
+                if (tryGetTableIdByName(payloadTable, tableId))
                 {
+                    // Для дочерних таблиц всегда принудительно выставляем child_type_id.
                     fields[kChildTypeIdColumn] = static_cast<Json::Int64>(tableId);
                 }
             }

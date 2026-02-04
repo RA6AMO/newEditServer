@@ -29,6 +29,7 @@ file(GLOB_RECURSE PROJECT_SOURCES CONFIGURE_DEPENDS
   "${CMAKE_SOURCE_DIR}/src/workers/*.cpp"
   "${CMAKE_SOURCE_DIR}/src/Lan/*.cpp"
   "${CMAKE_SOURCE_DIR}/src/Lan/RowAdd/*.cpp"
+  "${CMAKE_SOURCE_DIR}/src/Lan/CellUpdate/*.cpp"
 )
 
 # Добавляем заголовочные файлы для правильной работы MOC с Q_OBJECT
