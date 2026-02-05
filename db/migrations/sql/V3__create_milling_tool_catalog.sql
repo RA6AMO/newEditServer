@@ -1,7 +1,6 @@
 CREATE TABLE IF NOT EXISTS public.milling_tool_catalog (
     -- id: первичный ключ записи (идентификатор модели/типоразмера фрезы)
     id BIGSERIAL PRIMARY KEY,
-
     -- name: человекочитаемое наименование инструмента (например: "Фреза концевая сферическая D12 R6")
     name TEXT NULL,
 
@@ -44,6 +43,12 @@ CREATE TABLE IF NOT EXISTS public.milling_tool_catalog (
     -- NULL = изображения нет
     image_exists BIGINT NULL,
 
+    -- is_deleted: признак soft delete (true = скрыта)
+    is_deleted BOOLEAN NOT NULL DEFAULT false,
+
+    -- deleted_at: время soft delete (NULL = не удалена)
+    deleted_at TIMESTAMPTZ NULL,
+
     -- constraints: количества не могут быть отрицательными (NULL допустим для MVP)
     CONSTRAINT milling_tool_catalog_qty_on_stock_nonnegative_chk
       CHECK (qty_on_stock IS NULL OR qty_on_stock >= 0),
@@ -60,6 +65,9 @@ CREATE INDEX IF NOT EXISTS idx_milling_tool_catalog_child_type_id
 
 CREATE INDEX IF NOT EXISTS idx_milling_tool_catalog_brand_id
     ON public.milling_tool_catalog (brand_id);
+
+CREATE INDEX IF NOT EXISTS idx_milling_tool_catalog_soft_delete
+    ON public.milling_tool_catalog (is_deleted, deleted_at);
 
 -- Таблица изображений для инструментов (1:N связь с milling_tool_catalog)
 -- Хранит ссылки на MinIO для большого и маленького изображений, а также метаданные для ImageWithLink

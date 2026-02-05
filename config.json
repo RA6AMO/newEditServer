@@ -52,6 +52,17 @@
         "bucket": "fordata",
         "use_ssl": false
       }
+    },
+    {
+      "name": "SoftDeletePurgerPlugin",
+      "config": {
+        "table": "milling_tool_catalog",
+        "retention_days": 30,
+        "interval_minutes": 60,
+        "batch_size": 100,
+        "use_advisory_lock": true,
+        "advisory_lock_key": 739001
+      }
     }
   ],
   "minio": {

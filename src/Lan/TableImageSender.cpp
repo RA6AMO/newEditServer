@@ -1,5 +1,15 @@
 #include "Lan/TableImageSender.h"
 
+#include <drogon/drogon.h>
+#include <drogon/orm/DbClient.h>
+#include <drogon/orm/Exception.h>
+#include <drogon/utils/Utilities.h>
+#include <json/reader.h>
+#include <json/writer.h>
+
+#include "Storage/MinioPlugin.h"
+#include "TableInfoCache.h"
+
 #ifdef LOG_TRACE
 #undef LOG_TRACE
 #endif
@@ -20,15 +30,6 @@
 #endif
 
 #include "Loger/Logger.h"
-#include "Storage/MinioPlugin.h"
-#include "TableInfoCache.h"
-
-#include <drogon/drogon.h>
-#include <drogon/orm/DbClient.h>
-#include <drogon/orm/Exception.h>
-#include <drogon/utils/Utilities.h>
-#include <json/reader.h>
-#include <json/writer.h>
 
 #include <algorithm>
 #include <cctype>

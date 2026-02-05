@@ -1,0 +1,218 @@
+# SoftDeletePurger: документация и гайд расширения
+
+Этот документ описывает работу связки soft delete -> hard delete и новых классов:
+SoftDeletePurger, SoftDeletePurgerPlugin, SoftDeletePurgerController.
+
+Размещение:
+- Заголовки: include/Lan/RowDelete
+- Реализация: src/Lan/RowDelete
+
+
+=====================================================================
+1. КОНТЕКСТ И ПОТОК ДАННЫХ
+=====================================================================
+
+1) Soft delete выполняется контроллером RowDeleteController:
+   - ставит is_deleted = TRUE
+   - ставит deleted_at = now()
+
+2) Hard delete выполняется RowDeleteSer
+vice:
+   - использует ITableRowDeletePlanner для построения плана
+   - удаляет записи из БД
+   - удаляет файлы из MinIO (через MinioPlugin)
+
+3) Purger:
+   - выбирает записи, где is_deleted = TRUE
+   - deleted_at достаточно "старый" (retention_days)
+   - удаляет их через RowDeleteService
+
+4) Автоматический запуск:
+   - SoftDeletePurgerPlugin запускает runOnce по таймеру
+
+5) Ручной запуск:
+   - SoftDeletePurgerController POST /row/purge
+
+
+=====================================================================
+2. КЛАССЫ И ИХ РОЛИ
+=====================================================================
+
+2.1 SoftDeletePurger (include/Lan/RowDelete/SoftDeletePurger.h)
+-------------------------------------------------------------
+Роль:
+- делает один проход "очистки" (purge) мягко удаленных записей
+
+Ключевые параметры:
+- table: целевая таблица (по умолчанию milling_tool_catalog)
+- retentionDays: сколько дней держать soft delete
+- batchSize: сколько записей удалять за один проход
+- useAdvisoryLock: защищает от конкуренции между инстансами
+- advisoryLockKey: ключ advisory lock
+
+Основной метод:
+- runOnce(): возвращает количество удаленных строк
+
+Логика runOnce():
+- проверяет валидность table
+- (опционально) берет advisory lock
+- выбирает кандидатов:
+  SELECT id
+  FROM public.<table>
+  WHERE is_deleted = TRUE
+    AND deleted_at IS NOT NULL
+    AND deleted_at <= now() - (retentionDays * interval '1 day')
+  ORDER BY deleted_at ASC
+  LIMIT batchSize
+- для каждого id вызывает RowDeleteService::deleteRow(...)
+- снимает advisory lock
+
+
+2.2 SoftDeletePurgerPlugin (include/Lan/RowDelete/SoftDeletePurgerPlugin.h)
+-------------------------------------------------------------
+Роль:
+- создает SoftDeletePurger
+- читает конфиг из config.json
+- запускает таймер runEvery(...)
+- предоставляет метод runOnce() для ручного вызова
+
+Ключевые поля конфига:
+- table
+- retention_days
+- interval_minutes
+- batch_size
+- use_advisory_lock
+- advisory_lock_key
+
+Timer:
+- запускается каждые interval_minutes
+- внутри запускается coroutine (async_func) с runOnce()
+
+
+2.3 SoftDeletePurgerController (include/Lan/RowDelete/SoftDeletePurgerController.h)
+-------------------------------------------------------------
+Роль:
+- HTTP эндпоинт для ручного запуска purge
+- делает TokenValidator check как в других контроллерах
+- вызывает plugin->runOnce()
+
+Маршрут:
+- POST /row/purge
+
+Ответ:
+- ok: true
+- data.purged: количество удаленных строк
+
+
+=====================================================================
+3. КАК РАБОТАТЬ С PURGER
+=====================================================================
+
+3.1 Настройка
+--------------
+config.json -> plugins -> SoftDeletePurgerPlugin:
+- retention_days: сколько держать soft delete
+- interval_minutes: период автозапуска
+- batch_size: размер батча
+- use_advisory_lock: true для multi-instance
+- advisory_lock_key: любой int64, одинаковый для всех инстансов
+
+3.2 Запуск вручную
+------------------
+POST /row/purge
+Header: token: <валидный токен>
+
+3.3 Отключить авто запуск
+--------------------------
+interval_minutes = 0
+Плагин останется, но таймер не стартует.
+
+
+=====================================================================
+4. КАК РАСШИРЯТЬ
+=====================================================================
+
+4.1 Добавить поддержку новой таблицы
+-------------------------------------
+Вариант 1 (одна таблица):
+- В config.json указать:
+  "table": "new_table"
+- Убедиться, что в таблице есть:
+  is_deleted BOOLEAN NOT NULL DEFAULT false
+  deleted_at TIMESTAMPTZ NULL
+
+Вариант 2 (несколько таблиц):
+- Создать отдельный purger на каждую таблицу:
+  - несколько плагинов с разным конфигом
+  - или отдельные инстансы SoftDeletePurger,
+    запускаемые вручную/по расписанию
+
+Примечание:
+RowDeleteService поддерживает таблицы, зарегистрированные в
+createDefaultRowDeletePlannerRegistry().
+Если новая таблица не в реестре, hard delete не сработает.
+
+
+4.2 Добавить новую схему удаления (планировщик)
+------------------------------------------------
+1) Реализовать новый ITableRowDeletePlanner
+2) Зарегистрировать в createDefaultRowDeletePlannerRegistry()
+
+Таким образом:
+- SoftDeletePurger остается без изменений
+- hard delete будет корректно удалять данные и файлы
+
+
+4.3 Изменить стратегию выборки кандидатов
+-----------------------------------------
+В SoftDeletePurger::runOnce():
+- можно добавить фильтры
+- можно менять порядок (ORDER BY)
+- можно использовать SKIP LOCKED (если требуется)
+
+Пример:
+  ... ORDER BY deleted_at ASC LIMIT $2 FOR UPDATE SKIP LOCKED
+
+Важно:
+Выборка только по deleted_at + is_deleted,
+иначе можно удалить "живые" записи.
+
+
+=====================================================================
+5. ВАЖНЫЕ ДЕТАЛИ И РИСКИ
+=====================================================================
+
+- deleted_at обязательно должен устанавливаться при soft delete.
+- Если deleted_at NULL, запись не будет hard delete.
+- Advisory lock полезен, если приложение запущено в нескольких инстансах.
+- batch_size защищает от больших транзакций и длинных операций.
+- hard delete удаляет и MinIO объекты. Если MinIO недоступен,
+  RowDeleteService вернет warnings в логах (см. RowDeleteService).
+
+
+=====================================================================
+6. ЧАСТЫЕ ИЗМЕНЕНИЯ
+=====================================================================
+
+6.1 Изменить период хранения
+----------------------------
+config.json -> retention_days
+
+6.2 Изменить частоту работы
+----------------------------
+config.json -> interval_minutes
+
+6.3 Изменить размер батча
+--------------------------
+config.json -> batch_size
+
+
+=====================================================================
+7. КАК ЭТО РАБОТАЕТ В РАНТАЙМЕ (КРАТКО)
+=====================================================================
+
+1) Клиент вызывает POST /row/delete -> запись soft deleted
+2) Плагин по таймеру или ручной вызов запускает runOnce()
+3) Purger ищет просроченные записи и вызывает RowDeleteService
+4) RowDeleteService делает hard delete и удаляет MinIO объекты
+5) В логах видно количество удаленных записей и ошибки
