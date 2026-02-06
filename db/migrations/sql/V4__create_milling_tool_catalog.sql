@@ -1,6 +1,8 @@
 CREATE TABLE IF NOT EXISTS public.milling_tool_catalog (
     -- id: первичный ключ записи (идентификатор модели/типоразмера фрезы)
     id BIGSERIAL PRIMARY KEY,
+    -- global_id: глобальный идентификатор записи из реестра
+    global_id BIGINT NOT NULL,
     -- name: человекочитаемое наименование инструмента (например: "Фреза концевая сферическая D12 R6")
     name TEXT NULL,
 
@@ -53,7 +55,11 @@ CREATE TABLE IF NOT EXISTS public.milling_tool_catalog (
     CONSTRAINT milling_tool_catalog_qty_on_stock_nonnegative_chk
       CHECK (qty_on_stock IS NULL OR qty_on_stock >= 0),
     CONSTRAINT milling_tool_catalog_qty_in_use_nonnegative_chk
-      CHECK (qty_in_use IS NULL OR qty_in_use >= 0)
+      CHECK (qty_in_use IS NULL OR qty_in_use >= 0),
+    CONSTRAINT milling_tool_catalog_global_id_uniq UNIQUE (global_id),
+    CONSTRAINT milling_tool_catalog_global_id_fk
+      FOREIGN KEY (global_id)
+      REFERENCES public.global_object_registry(global_id)
 );
 
 -- indexes: ускоряют поиск/фильтрацию (ценой небольшого замедления вставки/обновления)
@@ -68,6 +74,49 @@ CREATE INDEX IF NOT EXISTS idx_milling_tool_catalog_brand_id
 
 CREATE INDEX IF NOT EXISTS idx_milling_tool_catalog_soft_delete
     ON public.milling_tool_catalog (is_deleted, deleted_at);
+
+-- Sync-триггеры: автоматическая синхронизация с global_object_registry
+CREATE OR REPLACE FUNCTION public.sync_milling_tool_catalog_to_registry()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF (TG_OP = 'INSERT') THEN
+    -- если id не задан вручную, выделяем из последовательности
+    IF (NEW.id IS NULL) THEN
+      NEW.id := nextval('public.milling_tool_catalog_id_seq');
+    END IF;
+
+    IF (NEW.global_id IS NULL) THEN
+      INSERT INTO public.global_object_registry (object_type, object_id)
+      VALUES ('milling_tool', NEW.id)
+      RETURNING global_id INTO NEW.global_id;
+    ELSE
+      INSERT INTO public.global_object_registry (global_id, object_type, object_id)
+      VALUES (NEW.global_id, 'milling_tool', NEW.id)
+      RETURNING global_id INTO NEW.global_id;
+    END IF;
+
+    RETURN NEW;
+  END IF;
+
+  IF (TG_OP = 'DELETE') THEN
+    DELETE FROM public.global_object_registry
+     WHERE object_type = 'milling_tool'
+       AND object_id = OLD.id;
+    RETURN OLD;
+  END IF;
+
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sync_milling_tool_catalog_to_registry ON public.milling_tool_catalog;
+
+CREATE TRIGGER trg_sync_milling_tool_catalog_to_registry
+BEFORE INSERT OR DELETE ON public.milling_tool_catalog
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_milling_tool_catalog_to_registry();
 
 -- Таблица изображений для инструментов (1:N связь с milling_tool_catalog)
 -- Хранит ссылки на MinIO для большого и маленького изображений, а также метаданные для ImageWithLink

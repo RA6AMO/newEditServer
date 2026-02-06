@@ -3,6 +3,7 @@
 #include "Lan/TableQueryBuilder.h"
 #include "Lan/TableRepository.h"
 #include "Lan/ServiceErrors.h"
+#include "Lan/GlobalIdService.h"
 #include "TableInfoCache.h"
 #include "Lan/allTableList.h"
 #include "Loger/Logger.h"
@@ -133,6 +134,20 @@ TableDataService::getPage(const std::string &tableName,
         out.total = co_await repo_->countRows(schema_, baseTable, whereSql);
         auto result = co_await repo_->selectPage(schema_, baseTable, whereSql, out.offset, out.limit);
 
+        std::vector<int64_t> localIds;
+        localIds.reserve(result.size());
+        for (const auto &r : result)
+        {
+            const auto &field = r["id"];
+            if (!field.isNull())
+            {
+                localIds.push_back(field.as<int64_t>());
+            }
+        }
+
+        GlobalIdService globalIdService;
+        const auto globalIdsByLocal = co_await globalIdService.getGlobalIdsByLocalIds(tableName, localIds);
+
         Json::Value rows(Json::arrayValue);
         rows.resize(0);
 
@@ -146,7 +161,28 @@ TableDataService::getPage(const std::string &tableName,
                 const std::string name = c["name"].asString();
                 const std::string type = c.get("type", "text").asString();
 
+                if (name == "global_id")
+                {
+                    continue;
+                }
+
                 const auto &field = r[name];
+                if (name == "id" && !field.isNull())
+                {
+                    const int64_t localId = field.as<int64_t>();
+                    const auto it = globalIdsByLocal.find(localId);
+                    if (it != globalIdsByLocal.end())
+                    {
+                        obj[name] = Json::Value(static_cast<Json::Int64>(it->second));
+                    }
+                    else
+                    {
+                        obj[name] = fieldToJson(field, type);
+                        LOG_WARNING("GlobalIdService: missing global_id for local id " + std::to_string(localId));
+                    }
+                    continue;
+                }
+
                 obj[name] = fieldToJson(field, type);
             }
             rows.append(std::move(obj));

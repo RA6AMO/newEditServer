@@ -41,6 +41,11 @@ inline const std::unordered_map<std::string, std::string> kTableMinioBySlot = {
     {"milling_tool_catalog", "milling_tool_images"},
 };
 
+// Маппинг базовой таблицы -> object_type для global_object_registry.
+inline const std::unordered_map<std::string, std::string> kTableObjectTypes = {
+    {"milling_tool_catalog", "milling_tool"},
+};
+
 inline bool tryGetTableNameById(int nodeId, std::string &outName)
 {
     auto it = kTableNames.find(nodeId);
@@ -73,6 +78,17 @@ inline bool tryGetChildSpec(const std::string &name, ChildTableSpec &outSpec)
         return false;
     }
     outSpec = it->second;
+    return true;
+}
+
+inline bool tryGetObjectTypeByTableName(const std::string &tableName, std::string &outType)
+{
+    auto it = kTableObjectTypes.find(tableName);
+    if (it == kTableObjectTypes.end())
+    {
+        return false;
+    }
+    outType = it->second;
     return true;
 }
 
